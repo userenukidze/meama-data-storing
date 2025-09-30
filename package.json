@@ -1,0 +1,22 @@
+{
+  "name": "shopify-data-puller",
+  "version": "1.0.0",
+  "description": "A simple project to pull data from Shopify stores using GraphQL",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "server": "node server.js",
+    "server:dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "node-fetch": "^3.3.2",
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "keywords": ["shopify", "graphql", "data", "api"],
+  "author": "",
+  "license": "MIT"
+}
