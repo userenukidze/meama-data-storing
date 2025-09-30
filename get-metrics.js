@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import ShopifyClient from './shopify-client.js';
+import ShopifyClient from './src/services/shopifyClient.js';
 import fs from 'fs/promises';
 import path from 'path';
 
