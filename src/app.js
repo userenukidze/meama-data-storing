@@ -51,6 +51,10 @@ app.use('*', (req, res) => {
       'GET /test - Test environment configuration',
       'GET /sales/today?shop=ecommerce - Get today\'s sales for specific shop',
       'GET /sales/yesterday?shop=ecommerce - Get yesterday\'s sales for specific shop',
+      'GET /sales/ecom/today?shop=ecommerce - Get ecom sales for today',
+      'GET /sales/ecom/yesterday?shop=ecommerce - Get ecom sales for yesterday',
+      'GET /sales/brandstore/today?shop=ecommerce - Get brand store sales for today',
+      'GET /sales/brandstore/yesterday?shop=ecommerce - Get brand store sales for yesterday',
       'GET /sales-today?shop=ecommerce - Legacy endpoint (redirects to /sales/today)',
       'GET /sales-yesterday?shop=ecommerce - Legacy endpoint (redirects to /sales/yesterday)'
     ],

@@ -17,6 +17,10 @@ const server = app.listen(PORT, () => {
   console.log(`   GET  http://localhost:${PORT}/test`);
   console.log(`   GET  http://localhost:${PORT}/sales/today?shop=ecommerce`);
   console.log(`   GET  http://localhost:${PORT}/sales/yesterday?shop=ecommerce`);
+  console.log(`   GET  http://localhost:${PORT}/sales/ecom/today?shop=ecommerce`);
+  console.log(`   GET  http://localhost:${PORT}/sales/ecom/yesterday?shop=ecommerce`);
+  console.log(`   GET  http://localhost:${PORT}/sales/brandstore/today?shop=ecommerce`);
+  console.log(`   GET  http://localhost:${PORT}/sales/brandstore/yesterday?shop=ecommerce`);
   console.log('');
   console.log('🏪 Available Shops:', getAvailableShops().join(', '));
   console.log('');

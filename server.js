@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import fetch from 'node-fetch';
 
 dotenv.config();
 
@@ -12,778 +11,66 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Multiple shop configurations (matching your existing structure)
-const SHOP_CONFIGS = {
-  ecommerce: {
-    shop: process.env.SHOPIFY_SHOP || process.env.SHOPIFY_MEAMA_B2B_SHOP,
-    accessToken: process.env.SHOPIFY_ACCESS_TOKEN || process.env.SHOPIFY_MEAMA_B2B_ACCESS_TOKEN,
-  },
-  vending: {
-    shop: process.env.SHOPIFY_VENDING_SHOP,
-    accessToken: process.env.SHOPIFY_MEAMA_VENDING_ACCESS_TOKEN,
-  },
-  collect: {
-    shop: process.env.SHOPIFY_MEAMA_COLLECT_SHOP,
-    accessToken: process.env.SHOPIFY_MEAMA_COLLECT_ACCESS_TOKEN,
-  },
-  franchise: {
-    shop: process.env.SHOPIFY_MEAMA_FRANCHISE_SHOP,
-    accessToken: process.env.SHOPIFY_MEAMA_FRANCHISE_ACCESS_TOKEN,
-  },
-  b2b: {
-    shop: process.env.SHOPIFY_MEAMA_B2B_SHOP,
-    accessToken: process.env.SHOPIFY_MEAMA_B2B_ACCESS_TOKEN,
-  },
-};
+// Import routes
+import healthRoutes from './src/routes/health.js';
+import shopsRoutes from './src/routes/shops.js';
+import testRoutes from './src/routes/test.js';
+import salesRoutes from './src/routes/sales.js';
 
-// Helper function to get shop config
-const getShopConfig = (shopType = "ecommerce") => {
-  return SHOP_CONFIGS[shopType] || SHOP_CONFIGS.ecommerce;
-};
+// Routes
+app.use('/health', healthRoutes);
+app.use('/shops', shopsRoutes);
+app.use('/test', testRoutes);
+app.use('/', salesRoutes);
 
-// Helper function to build query parts with source code filtering
-const buildQueryParts = (startISO, endISO, shopType = "ecommerce") => {
-  const qParts = [
-    `created_at:>=${startISO}`,
-    `created_at:<=${endISO}`,
-    "-cancelled_status:cancelled",
-    "-test:true",
-  ];
-
-  // Add channel filtering for Brand Stores
-  const shopConfig = getShopConfig(shopType);
-  if (shopConfig.channel) {
-    qParts.push(`channel:"${shopConfig.channel}"`);
-    console.log(
-      `🔍 [${shopType}] Added channel filter: channel:"${shopConfig.channel}"`
-    );
-  }
-
-  return qParts;
-};
-
-// Helper function to make GraphQL requests
-const makeGraphQLRequest = async (shopConfig, query, variables = {}) => {
-  const response = await fetch(
-    `https://${shopConfig.shop}/admin/api/${process.env.SHOPIFY_API_VERSION || "2023-10"}/graphql.json`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': shopConfig.accessToken,
-      },
-      body: JSON.stringify({ query, variables }),
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-
-  const data = await response.json();
-  
-  if (data.errors) {
-    throw new Error(`GraphQL errors: ${JSON.stringify(data.errors, null, 2)}`);
-  }
-
-  return data.data;
-};
-
-// Helper function to validate environment
-function validateEnvironment() {
-  const requiredVars = [
-    'SHOPIFY_SHOP',
-    'SHOPIFY_ACCESS_TOKEN'
-  ];
-  
-  const missing = requiredVars.filter(varName => !process.env[varName]);
-  
-  if (missing.length > 0) {
-    return {
-      valid: false,
-      missing,
-      message: `Missing required environment variables: ${missing.join(', ')}`
-    };
-  }
-  
-  return { valid: true };
-}
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  const envCheck = validateEnvironment();
-  
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    environment: {
-      valid: envCheck.valid,
-      missing: envCheck.missing || [],
-      availableShops: Object.keys(SHOP_CONFIGS)
-    }
-  });
+// Legacy route compatibility (redirects to new structure)
+app.get('/sales-today', (req, res) => {
+  res.redirect('/general-ecom/today' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
 });
 
-// Get available shops
-app.get('/shops', (req, res) => {
-  try {
-    const shopConfigs = {};
-    
-    Object.keys(SHOP_CONFIGS).forEach(shopType => {
-      const config = SHOP_CONFIGS[shopType];
-      shopConfigs[shopType] = {
-        shop: config.shop || 'UNDEFINED',
-        hasToken: !!config.accessToken,
-        status: config.shop && config.accessToken ? 'configured' : 'not_configured',
-        channel: config.channel || null
-      };
-    });
-    
-    res.json({
-      availableShops: Object.keys(SHOP_CONFIGS),
-      configurations: shopConfigs
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+app.get('/sales-yesterday', (req, res) => {
+  res.redirect('/general-ecom/yesterday' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
 });
 
-// Test endpoint to check environment
-app.get('/test', async (req, res) => {
-  try {
-    const envCheck = validateEnvironment();
-    
-    if (!envCheck.valid) {
-      return res.status(400).json({
-        success: false,
-        error: envCheck.message,
-        environment: {
-          valid: false,
-          missing: envCheck.missing
-        }
-      });
-    }
-    
-    // Try to get shop info
-    const shopConfig = getShopConfig('ecommerce');
-    const query = `
-      query {
-        shop {
-          id
-          name
-          email
-          domain
-          currencyCode
-        }
-      }
-    `;
-    
-    const shopInfo = await makeGraphQLRequest(shopConfig, query);
-    
-    res.json({
-      success: true,
-      message: 'Environment is properly configured',
-      shopInfo,
-      environment: {
-        valid: true,
-        shop: shopConfig.shop,
-        hasToken: !!shopConfig.accessToken
-      }
-    });
-  } catch (error) {
-    console.error('❌ Test failed:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      environment: {
-        valid: false,
-        message: 'Environment check failed'
-      }
-    });
-  }
+app.get('/ecom/today', (req, res) => {
+  res.redirect('/ecom/today' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
 });
 
-// SALES TODAY ENDPOINT
-app.get("/sales-today", async (req, res) => {
-  const startTime = Date.now();
-  try {
-    // Get shop configuration from query parameter
-    const { shop = "ecommerce" } = req.query;
-    const shopConfig = getShopConfig(shop);
-    const requestId = req.requestId || "unknown";
-
-    // Set date range to today only
-    const now = new Date();
-    const startDate = new Date();
-    startDate.setHours(0, 0, 0, 0); // Start of today
-
-    const startISO = startDate.toISOString();
-    const endISO = now.toISOString();
-
-    console.log(`\n📊 [${requestId}] SALES TODAY - Starting data fetch`);
-    console.log(`   🏪 Shop: ${shop}`);
-    console.log(
-      `   📅 Date Range: ${startISO.substring(0, 10)} to ${endISO.substring(0, 10)}`
-    );
-    console.log(`   ⏰ Current Time: ${now.toISOString()}`);
-    console.log(`   🌐 Shopify Domain: ${shopConfig.shop}`);
-    console.log(
-      `   🔑 API Version: ${process.env.SHOPIFY_API_VERSION || "2023-10"}`
-    );
-
-    // Query for all orders from today
-    const qParts = buildQueryParts(startISO, endISO, shop);
-    const orderQueryString = qParts.join(" ");
-
-    console.log(`   🔍 Query String: ${orderQueryString}`);
-    console.log(`   📡 Preparing GraphQL query to Shopify...`);
-
-    const GQL = `
-      query GetTodaySalesMetrics($cursor: String, $q: String!) {
-        orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
-          pageInfo { hasNextPage endCursor }
-          nodes {
-            id
-            name
-            createdAt
-            displayFinancialStatus
-            totalPriceSet { shopMoney { amount currencyCode } }
-            currentTotalPriceSet { shopMoney { amount currencyCode } }
-            totalRefundedSet { shopMoney { amount currencyCode } }
-            subtotalPriceSet { shopMoney { amount currencyCode } }
-            totalDiscountsSet { shopMoney { amount currencyCode } }
-            totalTaxSet { shopMoney { amount currencyCode } }
-            totalShippingPriceSet { shopMoney { amount currencyCode } }
-            lineItems(first: 50) {
-              nodes {
-                quantity
-                title
-                variantTitle
-                originalUnitPriceSet { shopMoney { amount currencyCode } }
-                discountedUnitPriceSet { shopMoney { amount currencyCode } }
-                variant {
-                  id
-                  title
-                  sku
-                  inventoryItem {
-                    unitCost { amount }
-                  }
-                  product {
-                    id
-                    title
-                    description
-                    handle
-                    productType
-                    vendor
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    let cursor = null;
-    let hasNext = true;
-    const orders = [];
-    let requestCount = 0;
-    let totalOrdersFound = 0;
-
-    // Fetch all orders with pagination
-    while (hasNext) {
-      requestCount++;
-      console.log(`Making request #${requestCount}...`);
-
-      const resp = await makeGraphQLRequest(shopConfig, GQL, { cursor, q: orderQueryString });
-      const conn = resp.orders;
-
-      // Filter orders to only include those from today
-      const todaysOrders = conn.nodes.filter((order) => {
-        const orderDate = new Date(order.createdAt);
-        return orderDate >= startDate && orderDate <= now;
-      });
-
-      totalOrdersFound += todaysOrders.length;
-      orders.push(...todaysOrders);
-
-      console.log(
-        `Batch ${requestCount}: Found ${todaysOrders.length} orders for today (Total: ${totalOrdersFound})`
-      );
-
-      hasNext = conn.pageInfo.hasNextPage;
-      cursor = conn.pageInfo.endCursor;
-
-      // Increased limit and added better logging
-      if (requestCount > 25) {
-        console.warn(
-          "Reached maximum request limit - some orders may be missing"
-        );
-        break;
-      }
-    }
-
-    console.log(`\n📊 [${requestId}] DATA PROCESSING - Starting calculations`);
-    console.log(`   📦 Total Orders Found: ${totalOrdersFound}`);
-    console.log(`   📅 Date: ${startISO.substring(0, 10)}`);
-    console.log(`   🔄 Processing ${orders.length} orders...`);
-
-    // Calculate metrics
-    let currencyCode = null;
-    let grossSales = 0;
-    let totalSales = 0;
-    let totalRefunds = 0;
-    let totalCOGS = 0;
-    let totalOrders = orders.length;
-    let refundedOrders = 0;
-    let totalItemsSold = 0; // Total quantity of all individual items/capsules
-
-    // Process orders
-    orders.forEach((order) => {
-      // Parse all monetary values
-      const originalTotal = parseFloat(
-        order.totalPriceSet?.shopMoney?.amount || "0"
-      );
-      const discounts = parseFloat(
-        order.totalDiscountsSet?.shopMoney?.amount || "0"
-      );
-      const currentTotal = parseFloat(
-        order.currentTotalPriceSet?.shopMoney?.amount || "0"
-      );
-      const refunded = parseFloat(
-        order.totalRefundedSet?.shopMoney?.amount || "0"
-      );
-
-      // Calculate COGS for this order and count total items
-      let orderCOGS = 0;
-      order.lineItems?.nodes?.forEach((item) => {
-        const quantity = item.quantity || 0;
-        const unitCost = parseFloat(
-          item.variant?.inventoryItem?.unitCost?.amount || "0"
-        );
-        orderCOGS += quantity * unitCost;
-        totalItemsSold += quantity; // Add to total items sold
-      });
-
-      if (!currencyCode) {
-        currencyCode = order.totalPriceSet?.shopMoney?.currencyCode;
-      }
-
-      // Keep original gross sales calculation
-      grossSales += originalTotal + discounts;
-
-      // Track COGS
-      totalCOGS += orderCOGS;
-
-      // Track total sales (current amount after refunds)
-      totalSales += currentTotal;
-
-      // Track refunds
-      totalRefunds += refunded;
-      if (refunded > 0) {
-        refundedOrders++;
-      }
-    });
-
-    // Product Analysis
-    const productMap = new Map();
-
-    orders.forEach((order) => {
-      order.lineItems?.nodes?.forEach((item) => {
-        const productId = item.variant?.product?.id;
-        const productTitle = item.variant?.product?.title || item.title;
-        const variantTitle = item.variantTitle || item.variant?.title || "";
-        const fullTitle = variantTitle
-          ? `${productTitle} - ${variantTitle}`
-          : productTitle;
-        const quantity = item.quantity || 0;
-        const unitPrice = parseFloat(
-          item.originalUnitPriceSet?.shopMoney?.amount ||
-            item.discountedUnitPriceSet?.shopMoney?.amount ||
-            "0"
-        );
-        const totalPrice = quantity * unitPrice;
-        const unitCost = parseFloat(
-          item.variant?.inventoryItem?.unitCost?.amount || "0"
-        );
-        const totalCost = quantity * unitCost;
-
-        if (productId) {
-          if (productMap.has(productId)) {
-            const existing = productMap.get(productId);
-            existing.quantity += quantity;
-            existing.totalSales += totalPrice;
-            existing.totalCost += totalCost;
-            existing.orders += 1;
-          } else {
-            productMap.set(productId, {
-              productId,
-              title: productTitle,
-              fullTitle,
-              description: item.variant?.product?.description || "",
-              sku: item.variant?.sku || "",
-              productType: item.variant?.product?.productType || "",
-              vendor: item.variant?.product?.vendor || "",
-              quantity,
-              totalSales: totalPrice,
-              totalCost,
-              unitPrice,
-              unitCost,
-              orders: 1,
-            });
-          }
-        }
-      });
-    });
-
-    // Convert to array and sort by total sales (most popular first)
-    const products = Array.from(productMap.values()).sort(
-      (a, b) => b.totalSales - a.totalSales
-    );
-
-    const mostPopular = products.slice(0, 10); // Top 10
-    const leastPopular = products.slice(-10).reverse(); // Bottom 10
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      summary: {
-        totalSales: parseFloat(totalSales.toFixed(2)),
-        totalCOGS: parseFloat(totalCOGS.toFixed(2)),
-        totalOrders,
-        currencyCode,
-      },
-      productAnalysis: {
-        mostPopular: mostPopular.map((p) => ({
-          title: p.fullTitle,
-          description: p.description,
-          quantity: p.quantity,
-          totalSales: parseFloat(p.totalSales.toFixed(2)),
-          unitPrice: parseFloat(p.unitPrice.toFixed(2)),
-          orders: p.orders,
-          sku: p.sku,
-          productType: p.productType,
-          vendor: p.vendor,
-        })),
-        leastPopular: leastPopular.map((p) => ({
-          title: p.fullTitle,
-          description: p.description,
-          quantity: p.quantity,
-          totalSales: parseFloat(p.totalSales.toFixed(2)),
-          unitPrice: parseFloat(p.unitPrice.toFixed(2)),
-          orders: p.orders,
-          sku: p.sku,
-          productType: p.productType,
-          vendor: p.vendor,
-        })),
-      },
-    };
-
-    console.log(`\n✅ [${requestId}] SALES TODAY - Processing Complete`);
-    console.log(`   📊 Final Metrics:`);
-    console.log(
-      `      💰 Total Sales: ${totalSales.toFixed(2)} ${currencyCode || "GEL"}`
-    );
-    console.log(`      📦 Total Orders: ${totalOrders}`);
-    console.log(`      💸 Total COGS: ${totalCOGS.toFixed(2)} ${currencyCode || "GEL"}`);
-    console.log(`      🏷️  Products Analyzed: ${products.length}`);
-    console.log(`      ⏱️  Total Processing Time: ${Date.now() - startTime}ms`);
-
-    res.json(response);
-  } catch (error) {
-    console.error(
-      "Error calculating today's sales metrics:",
-      error?.response?.data || error.message
-    );
-    res.status(500).json({
-      error: "Failed to calculate today's sales metrics",
-      message: error.message,
-    });
-  }
+app.get('/ecom/yesterday', (req, res) => {
+  res.redirect('/ecom/yesterday' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
 });
 
-// SALES YESTERDAY ENDPOINT
-app.get("/sales-yesterday", async (req, res) => {
-  try {
-    // Get shop configuration from query parameter
-    const { shop = "ecommerce" } = req.query;
-    const shopConfig = getShopConfig(shop);
+app.get('/brandstore/today', (req, res) => {
+  res.redirect('/brandstores/today' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
+});
 
-    // Set date range to yesterday
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    yesterday.setHours(0, 0, 0, 0);
-    const endDate = new Date(yesterday);
-    endDate.setHours(23, 59, 59, 999);
+app.get('/brandstore/yesterday', (req, res) => {
+  res.redirect('/brandstores/yesterday' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
+});
 
-    const startISO = yesterday.toISOString();
-    const endISO = endDate.toISOString();
+// Additional legacy redirects for old /sales/ format
+app.get('/sales/brandstore/today', (req, res) => {
+  res.redirect('/brandstores/today' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
+});
 
-    console.log(
-      `Calculating yesterday's sales metrics from ${startISO.substring(0, 10)}`
-    );
+app.get('/sales/brandstore/yesterday', (req, res) => {
+  res.redirect('/brandstores/yesterday' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
+});
 
-    // Query for all orders from yesterday
-    const qParts = [
-      `created_at:>=${startISO}`,
-      `created_at:<=${endISO}`,
-      "-cancelled_status:cancelled",
-      "-test:true",
-    ];
-    const orderQueryString = qParts.join(" ");
+app.get('/sales/ecom/today', (req, res) => {
+  res.redirect('/ecom/today' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
+});
 
-    const GQL = `
-      query GetYesterdaySalesMetrics($cursor: String, $q: String!) {
-        orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
-          pageInfo { hasNextPage endCursor }
-          nodes {
-            id
-            name
-            createdAt
-            displayFinancialStatus
-            totalPriceSet { shopMoney { amount currencyCode } }
-            currentTotalPriceSet { shopMoney { amount currencyCode } }
-            totalRefundedSet { shopMoney { amount currencyCode } }
-            subtotalPriceSet { shopMoney { amount currencyCode } }
-            totalDiscountsSet { shopMoney { amount currencyCode } }
-            totalTaxSet { shopMoney { amount currencyCode } }
-            totalShippingPriceSet { shopMoney { amount currencyCode } }
-            lineItems(first: 50) {
-              nodes {
-                quantity
-                title
-                variantTitle
-                originalUnitPriceSet { shopMoney { amount currencyCode } }
-                discountedUnitPriceSet { shopMoney { amount currencyCode } }
-                variant {
-                  id
-                  title
-                  sku
-                  inventoryItem {
-                    unitCost { amount }
-                  }
-                  product {
-                    id
-                    title
-                    description
-                    handle
-                    productType
-                    vendor
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
+app.get('/sales/ecom/yesterday', (req, res) => {
+  res.redirect('/ecom/yesterday' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
+});
 
-    let cursor = null;
-    let hasNext = true;
-    const orders = [];
-    let requestCount = 0;
-    let totalOrdersFound = 0;
+app.get('/sales/today', (req, res) => {
+  res.redirect('/general-ecom/today' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
+});
 
-    // Fetch all orders with pagination
-    while (hasNext) {
-      requestCount++;
-      console.log(`Making request #${requestCount}...`);
-
-      const resp = await makeGraphQLRequest(shopConfig, GQL, { cursor, q: orderQueryString });
-      const conn = resp.orders;
-
-      // Filter orders
-      const yesterdayOrders = conn.nodes.filter((order) => {
-        const orderDate = new Date(order.createdAt);
-        return orderDate >= yesterday && orderDate <= endDate;
-      });
-
-      totalOrdersFound += yesterdayOrders.length;
-      orders.push(...yesterdayOrders);
-
-      console.log(
-        `Batch ${requestCount}: Found ${yesterdayOrders.length} orders (Total: ${totalOrdersFound})`
-      );
-
-      hasNext = conn.pageInfo.hasNextPage;
-      cursor = conn.pageInfo.endCursor;
-
-      if (requestCount > 25) {
-        console.warn("Reached maximum request limit");
-        break;
-      }
-    }
-
-    // Calculate metrics
-    let currencyCode = null;
-    let grossSales = 0;
-    let totalSales = 0;
-    let totalRefunds = 0;
-    let totalCOGS = 0;
-    let totalOrders = orders.length;
-    let refundedOrders = 0;
-    let totalItemsSold = 0; // Total quantity of all individual items/capsules
-
-    // Process orders
-    orders.forEach((order) => {
-      const originalTotal = parseFloat(
-        order.totalPriceSet?.shopMoney?.amount || "0"
-      );
-      const discounts = parseFloat(
-        order.totalDiscountsSet?.shopMoney?.amount || "0"
-      );
-      const currentTotal = parseFloat(
-        order.currentTotalPriceSet?.shopMoney?.amount || "0"
-      );
-      const refunded = parseFloat(
-        order.totalRefundedSet?.shopMoney?.amount || "0"
-      );
-
-      // Calculate COGS and count total items
-      let orderCOGS = 0;
-      order.lineItems?.nodes?.forEach((item) => {
-        const quantity = item.quantity || 0;
-        const unitCost = parseFloat(
-          item.variant?.inventoryItem?.unitCost?.amount || "0"
-        );
-        orderCOGS += quantity * unitCost;
-        totalItemsSold += quantity; // Add to total items sold
-      });
-
-      if (!currencyCode) {
-        currencyCode = order.totalPriceSet?.shopMoney?.currencyCode;
-      }
-
-      // Keep original gross sales calculation
-      grossSales += originalTotal + discounts;
-
-      // Track COGS
-      totalCOGS += orderCOGS;
-
-      // Track total sales
-      totalSales += currentTotal;
-
-      // Track refunds
-      totalRefunds += refunded;
-      if (refunded > 0) {
-        refundedOrders++;
-      }
-    });
-
-    // Product Analysis
-    const productMap = new Map();
-
-    orders.forEach((order) => {
-      order.lineItems?.nodes?.forEach((item) => {
-        const productId = item.variant?.product?.id;
-        const productTitle = item.variant?.product?.title || item.title;
-        const variantTitle = item.variantTitle || item.variant?.title || "";
-        const fullTitle = variantTitle
-          ? `${productTitle} - ${variantTitle}`
-          : productTitle;
-        const quantity = item.quantity || 0;
-        const unitPrice = parseFloat(
-          item.originalUnitPriceSet?.shopMoney?.amount ||
-            item.discountedUnitPriceSet?.shopMoney?.amount ||
-            "0"
-        );
-        const totalPrice = quantity * unitPrice;
-        const unitCost = parseFloat(
-          item.variant?.inventoryItem?.unitCost?.amount || "0"
-        );
-        const totalCost = quantity * unitCost;
-
-        if (productId) {
-          if (productMap.has(productId)) {
-            const existing = productMap.get(productId);
-            existing.quantity += quantity;
-            existing.totalSales += totalPrice;
-            existing.totalCost += totalCost;
-            existing.orders += 1;
-          } else {
-            productMap.set(productId, {
-              productId,
-              title: productTitle,
-              fullTitle,
-              description: item.variant?.product?.description || "",
-              sku: item.variant?.sku || "",
-              productType: item.variant?.product?.productType || "",
-              vendor: item.variant?.product?.vendor || "",
-              quantity,
-              totalSales: totalPrice,
-              totalCost,
-              unitPrice,
-              unitCost,
-              orders: 1,
-            });
-          }
-        }
-      });
-    });
-
-    // Convert to array and sort by total sales (most popular first)
-    const products = Array.from(productMap.values()).sort(
-      (a, b) => b.totalSales - a.totalSales
-    );
-
-    const mostPopular = products.slice(0, 10); // Top 10
-    const leastPopular = products.slice(-10).reverse(); // Bottom 10
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      summary: {
-        totalSales: parseFloat(totalSales.toFixed(2)),
-        totalCOGS: parseFloat(totalCOGS.toFixed(2)),
-        totalOrders,
-        currencyCode,
-      },
-      productAnalysis: {
-        mostPopular: mostPopular.map((p) => ({
-          title: p.fullTitle,
-          description: p.description,
-          quantity: p.quantity,
-          totalSales: parseFloat(p.totalSales.toFixed(2)),
-          unitPrice: parseFloat(p.unitPrice.toFixed(2)),
-          orders: p.orders,
-          sku: p.sku,
-          productType: p.productType,
-          vendor: p.vendor,
-        })),
-        leastPopular: leastPopular.map((p) => ({
-          title: p.fullTitle,
-          description: p.description,
-          quantity: p.quantity,
-          totalSales: parseFloat(p.totalSales.toFixed(2)),
-          unitPrice: parseFloat(p.unitPrice.toFixed(2)),
-          orders: p.orders,
-          sku: p.sku,
-          productType: p.productType,
-          vendor: p.vendor,
-        })),
-      },
-    };
-
-    console.log(
-      `Processed ${totalOrders} orders - Total Sales: ${totalSales.toFixed(2)} ${currencyCode || "GEL"} - COGS: ${totalCOGS.toFixed(2)} ${currencyCode || "GEL"}`
-    );
-    res.json(response);
-  } catch (error) {
-    console.error(
-      "Error calculating yesterday's metrics:",
-      error?.response?.data || error.message
-    );
-    res.status(500).json({
-      error: "Failed to calculate yesterday's sales metrics",
-      message: error.message,
-    });
-  }
+app.get('/sales/yesterday', (req, res) => {
+  res.redirect('/general-ecom/yesterday' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
 });
 
 // Error handling middleware
@@ -805,15 +92,27 @@ app.use('*', (req, res) => {
       'GET /health - Health check and environment status',
       'GET /shops - List available shops and their configuration',
       'GET /test - Test environment configuration',
-      'GET /sales-today?shop=ecommerce - Get today\'s sales for specific shop',
-      'GET /sales-yesterday?shop=ecommerce - Get yesterday\'s sales for specific shop'
+      'GET /general-ecom/today?shop=ecommerce - All sales from ecommerce shop today',
+      'GET /general-ecom/yesterday?shop=ecommerce - All sales from ecommerce shop yesterday',
+      'GET /ecom/today?shop=ecommerce - Online orders only today',
+      'GET /ecom/yesterday?shop=ecommerce - Online orders only yesterday',
+      'GET /brandstores/today?shop=ecommerce - POS orders only today',
+      'GET /brandstores/yesterday?shop=ecommerce - POS orders only yesterday',
+      'GET /vending/today - All sales from vending store today',
+      'GET /vending/yesterday - All sales from vending store yesterday',
+      'GET /collect/today - All sales from collect store today',
+      'GET /collect/yesterday - All sales from collect store yesterday',
+      'GET /franchise/today - All sales from franchise store today',
+      'GET /franchise/yesterday - All sales from franchise store yesterday',
+      'GET /b2b/today - All sales from b2b store today',
+      'GET /b2b/yesterday - All sales from b2b store yesterday'
     ],
-    availableShops: ['ecommerce', 'vending', 'collect', 'franchise', 'b2b']
+    availableShops: ['ecommerce', 'vending', 'collect', 'franchise', 'b2b', 'brandstores']
   });
 });
 
 // Start server with error handling
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   console.log('🚀 Shopify Data Puller Server Started');
   console.log('=====================================');
   console.log(`🌐 Server running on: http://localhost:${PORT}`);
@@ -822,12 +121,29 @@ const server = app.listen(PORT, () => {
   console.log(`   GET  http://localhost:${PORT}/health`);
   console.log(`   GET  http://localhost:${PORT}/shops`);
   console.log(`   GET  http://localhost:${PORT}/test`);
-  console.log(`   GET  http://localhost:${PORT}/sales-today?shop=ecommerce`);
-  console.log(`   GET  http://localhost:${PORT}/sales-yesterday?shop=ecommerce`);
   console.log('');
-  console.log('🏪 Available Shops: ecommerce, vending, collect, franchise, b2b');
+  console.log('🏪 ECOMMERCE SHOP:');
+  console.log(`   GET  http://localhost:${PORT}/general-ecom/today?shop=ecommerce`);
+  console.log(`   GET  http://localhost:${PORT}/general-ecom/yesterday?shop=ecommerce`);
+  console.log(`   GET  http://localhost:${PORT}/ecom/today?shop=ecommerce`);
+  console.log(`   GET  http://localhost:${PORT}/ecom/yesterday?shop=ecommerce`);
+  console.log(`   GET  http://localhost:${PORT}/brandstores/today?shop=ecommerce`);
+  console.log(`   GET  http://localhost:${PORT}/brandstores/yesterday?shop=ecommerce`);
+  console.log('');
+  console.log('🏪 OTHER STORES:');
+  console.log(`   GET  http://localhost:${PORT}/vending/today`);
+  console.log(`   GET  http://localhost:${PORT}/vending/yesterday`);
+  console.log(`   GET  http://localhost:${PORT}/collect/today`);
+  console.log(`   GET  http://localhost:${PORT}/collect/yesterday`);
+  console.log(`   GET  http://localhost:${PORT}/franchise/today`);
+  console.log(`   GET  http://localhost:${PORT}/franchise/yesterday`);
+  console.log(`   GET  http://localhost:${PORT}/b2b/today`);
+  console.log(`   GET  http://localhost:${PORT}/b2b/yesterday`);
+  console.log('');
+  console.log('🏪 Available Shops: ecommerce, vending, collect, franchise, b2b, brandstores');
   console.log('');
   console.log('🔧 Environment Check:');
+  const { validateEnvironment } = await import('./src/config/environment.js');
   const envCheck = validateEnvironment();
   if (envCheck.valid) {
     console.log('   ✅ Environment variables are configured');
