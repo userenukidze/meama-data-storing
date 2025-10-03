@@ -3,7 +3,7 @@ import fetch from 'node-fetch';
 import { getShopConfig } from '../config/shopConfigs.js';
 import { getTodayRange, getYesterdayRange } from '../utils/dateUtils.js';
 import { buildOrderQueryString } from '../utils/queryBuilder.js';
-import { calculateProductAnalysis } from '../utils/metricsCalculator.js';
+import { calculateProductAnalysis, calculateCapsulesSold } from '../utils/metricsCalculator.js';
 
 const router = express.Router();
 
@@ -76,6 +76,10 @@ function calculateSourceMetrics(orders, sourceName) {
   // Calculate AOV (Average Order Value)
   const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
 
+  // Calculate capsules sold using naming conventions
+  const totalCapsulesSold = calculateCapsulesSold(orders);
+  console.log(`[DEBUG] totalCapsulesSold for ${sourceName}:`, totalCapsulesSold);
+
   // Product Analysis
   const productAnalysis = calculateProductAnalysis(orders);
 
@@ -88,7 +92,8 @@ function calculateSourceMetrics(orders, sourceName) {
       currencyCode,
       totalRefunds: parseFloat(totalRefunds.toFixed(2)),
       refundedOrders,
-      totalItemsSold
+      totalItemsSold,
+      totalCapsulesSold
     },
     productAnalysis
   };
@@ -610,6 +615,240 @@ router.get("/b2b/yesterday", async (req, res) => {
     console.error("Error calculating b2b yesterday metrics:", error?.response?.data || error.message);
     res.status(500).json({
       error: "Failed to calculate b2b yesterday metrics",
+      message: error.message,
+    });
+  }
+});
+
+// Additional routes for the exact URLs the user expects
+router.get("/brandstore/today", async (req, res) => {
+  try {
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const { startISO, endISO } = getTodayRange();
+
+    const orders = await processOrdersForStore(shop, getTodayRange(), requestId, 'pos');
+    const metrics = calculateSourceMetrics(orders, "Brand Stores");
+
+    const response = {
+      dateRange: {
+        from: startISO.substring(0, 10),
+        to: endISO.substring(0, 10),
+        lastUpdated: new Date().toISOString(),
+      },
+      ...metrics
+    };
+
+    console.log(`✅ [${requestId}] BRAND STORE TODAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating brand store today metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate brand store today metrics",
+      message: error.message,
+    });
+  }
+});
+
+router.get("/brandstore/yesterday", async (req, res) => {
+  try {
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const { startISO, endISO } = getYesterdayRange();
+
+    const orders = await processOrdersForStore(shop, getYesterdayRange(), requestId, 'pos');
+    const metrics = calculateSourceMetrics(orders, "Brand Stores");
+
+    const response = {
+      dateRange: {
+        from: startISO.substring(0, 10),
+        to: endISO.substring(0, 10),
+        lastUpdated: new Date().toISOString(),
+      },
+      ...metrics
+    };
+
+    console.log(`✅ [${requestId}] BRAND STORE YESTERDAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating brand store yesterday metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate brand store yesterday metrics",
+      message: error.message,
+    });
+  }
+});
+
+// Routes for /sales/ prefix format
+router.get("/sales/today", async (req, res) => {
+  try {
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const { startISO, endISO } = getTodayRange();
+
+    const orders = await processOrdersForStore(shop, getTodayRange(), requestId);
+    const metrics = calculateSourceMetrics(orders, "General Ecom");
+
+    const response = {
+      dateRange: {
+        from: startISO.substring(0, 10),
+        to: endISO.substring(0, 10),
+        lastUpdated: new Date().toISOString(),
+      },
+      ...metrics
+    };
+
+    console.log(`✅ [${requestId}] SALES TODAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating sales today metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate sales today metrics",
+      message: error.message,
+    });
+  }
+});
+
+router.get("/sales/yesterday", async (req, res) => {
+  try {
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const { startISO, endISO } = getYesterdayRange();
+
+    const orders = await processOrdersForStore(shop, getYesterdayRange(), requestId);
+    const metrics = calculateSourceMetrics(orders, "General Ecom");
+
+    const response = {
+      dateRange: {
+        from: startISO.substring(0, 10),
+        to: endISO.substring(0, 10),
+        lastUpdated: new Date().toISOString(),
+      },
+      ...metrics
+    };
+
+    console.log(`✅ [${requestId}] SALES YESTERDAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating sales yesterday metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate sales yesterday metrics",
+      message: error.message,
+    });
+  }
+});
+
+router.get("/sales/ecom/today", async (req, res) => {
+  try {
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const { startISO, endISO } = getTodayRange();
+
+    const orders = await processOrdersForStore(shop, getTodayRange(), requestId, 'online');
+    const metrics = calculateSourceMetrics(orders, "Ecom");
+
+    const response = {
+      dateRange: {
+        from: startISO.substring(0, 10),
+        to: endISO.substring(0, 10),
+        lastUpdated: new Date().toISOString(),
+      },
+      ...metrics
+    };
+
+    console.log(`✅ [${requestId}] SALES ECOM TODAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating sales ecom today metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate sales ecom today metrics",
+      message: error.message,
+    });
+  }
+});
+
+router.get("/sales/ecom/yesterday", async (req, res) => {
+  try {
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const { startISO, endISO } = getYesterdayRange();
+
+    const orders = await processOrdersForStore(shop, getYesterdayRange(), requestId, 'online');
+    const metrics = calculateSourceMetrics(orders, "Ecom");
+
+    const response = {
+      dateRange: {
+        from: startISO.substring(0, 10),
+        to: endISO.substring(0, 10),
+        lastUpdated: new Date().toISOString(),
+      },
+      ...metrics
+    };
+
+    console.log(`✅ [${requestId}] SALES ECOM YESTERDAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating sales ecom yesterday metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate sales ecom yesterday metrics",
+      message: error.message,
+    });
+  }
+});
+
+router.get("/sales/brandstore/today", async (req, res) => {
+  try {
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const { startISO, endISO } = getTodayRange();
+
+    const orders = await processOrdersForStore(shop, getTodayRange(), requestId, 'pos');
+    const metrics = calculateSourceMetrics(orders, "Brand Stores");
+
+    const response = {
+      dateRange: {
+        from: startISO.substring(0, 10),
+        to: endISO.substring(0, 10),
+        lastUpdated: new Date().toISOString(),
+      },
+      ...metrics
+    };
+
+    console.log(`✅ [${requestId}] SALES BRAND STORE TODAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating sales brand store today metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate sales brand store today metrics",
+      message: error.message,
+    });
+  }
+});
+
+router.get("/sales/brandstore/yesterday", async (req, res) => {
+  try {
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const { startISO, endISO } = getYesterdayRange();
+
+    const orders = await processOrdersForStore(shop, getYesterdayRange(), requestId, 'pos');
+    const metrics = calculateSourceMetrics(orders, "Brand Stores");
+
+    const response = {
+      dateRange: {
+        from: startISO.substring(0, 10),
+        to: endISO.substring(0, 10),
+        lastUpdated: new Date().toISOString(),
+      },
+      ...metrics
+    };
+
+    console.log(`✅ [${requestId}] SALES BRAND STORE YESTERDAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating sales brand store yesterday metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate sales brand store yesterday metrics",
       message: error.message,
     });
   }

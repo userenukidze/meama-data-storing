@@ -43,23 +43,15 @@ export function calculateDetailedMetrics(orders, startISO, endISO) {
           
           // Units sold
           totalUnitsSold += quantity;
-          
-          // Capsules sold (assuming capsules are identified by product type or title)
-          const productType = item.variant?.product?.productType?.toLowerCase() || "";
-          const title = (item.title || "").toLowerCase();
-          
-          if (productType.includes("capsule") || 
-              title.includes("capsule") || 
-              productType.includes("pod") ||
-              title.includes("pod")) {
-            totalCapsulesSold += quantity;
-          }
         });
       }
   });
 
   // Calculate derived metrics
   const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
+  
+  // Calculate capsules sold using the new naming convention logic
+  totalCapsulesSold = calculateCapsulesSold(orders);
 
   return {
     summary: {
@@ -79,6 +71,137 @@ export function calculateDetailedMetrics(orders, startISO, endISO) {
     },
     orders: orders // Include raw orders for detailed analysis if needed
   };
+}
+
+/**
+ * Calculate capsules sold based on product naming conventions
+ * @param {string} productTitle - Product title to analyze
+ * @param {string} variantTitle - Variant title to analyze
+ * @returns {number} Number of capsules for this product
+ */
+function calculateCapsulesFromNaming(productTitle, variantTitle, sku = "") {
+  // Combine product title, variant title, and SKU for analysis
+  const fullTitle = `${productTitle || ""} ${variantTitle || ""} ${sku || ""}`.trim().toLowerCase();
+  
+  // Check if this is a capsule product based on naming prefixes
+  const capsulePrefixes = ['cap', 'tea', 'mix', 'e37', 'm51', 'espressobox', 'multibox'];
+  const isCapsuleProduct = capsulePrefixes.some(prefix => 
+    fullTitle.startsWith(prefix) || 
+    fullTitle.includes(`-${prefix}`) ||
+    fullTitle.includes(`${prefix}-`)
+  );
+  
+  if (!isCapsuleProduct) {
+    return 0;
+  }
+  
+  // Special cases with exact naming patterns
+  const specialCases = {
+    'e37 - espressobox': 12,
+    'm51 - multibox': 12,
+    'espressobox': 12,
+    'multibox': 12,
+    'e37': 12,
+    'm51': 12,
+    'cap51-energy booster': 1,
+    'cap51-electrolytes': 1,
+    'cap51-14r': 1,
+    'cap37-10cr': 10,
+    'cap51-15c': 12,
+    'cap51-12cr': 12,
+    'cap51-1226': 12,
+    'cap51-1225': 12,
+    'cap51-1215': 12,
+    'cap51-1214gr': 12,
+    'cap51-25': 1,
+    'cap51-15': 1,
+    'cap36-1015': 10,
+    'tea51-15': 1,
+    'tea51-1215': 12,
+    'mix-1201': 12,
+    'mix-01': 1,
+    'mix-02-1212': 12
+  };
+  
+  // Check for exact matches first
+  for (const [pattern, capsules] of Object.entries(specialCases)) {
+    if (fullTitle.includes(pattern)) {
+      return capsules;
+    }
+  }
+  
+  // Pattern matching for 4-digit codes after dash
+  const fourDigitMatch = fullTitle.match(/-(\d{4})/);
+  if (fourDigitMatch) {
+    const fourDigitCode = fourDigitMatch[1];
+    const firstTwoDigits = parseInt(fourDigitCode.substring(0, 2));
+    
+    // Handle special cases for 4-digit codes
+    if (fourDigitCode === '1015') return 10; // cap36-1015 exception
+    if (fourDigitCode === '1215') return 12; // tea51-1215
+    if (fourDigitCode === '1225') return 12; // cap51-1225
+    if (fourDigitCode === '1226') return 12; // cap51-1226
+    if (fourDigitCode === '1214') return 12; // cap51-1214gr
+    
+    // Default rule: first two digits = capsule count
+    return firstTwoDigits;
+  }
+  
+  // Pattern matching for 2-digit codes after dash
+  const twoDigitMatch = fullTitle.match(/-(\d{2})/);
+  if (twoDigitMatch) {
+    const twoDigitCode = twoDigitMatch[1];
+    
+    // Handle special cases for 2-digit codes
+    if (twoDigitCode === '15') return 1; // cap51-15, tea51-15
+    if (twoDigitCode === '25') return 1; // cap51-25
+    if (twoDigitCode === '14') return 1; // cap51-14r
+    
+    // Default rule: 2-digit code = capsule count
+    return parseInt(twoDigitCode);
+  }
+  
+  // Single digit after dash
+  const singleDigitMatch = fullTitle.match(/-(\d{1})/);
+  if (singleDigitMatch) {
+    return parseInt(singleDigitMatch[1]);
+  }
+  
+  // If no numeric pattern found, check for specific keywords
+  if (fullTitle.includes('box') || fullTitle.includes('multibox') || fullTitle.includes('espressobox')) {
+    return 12;
+  }
+  
+  // Default: 1 capsule if it matches capsule prefixes but no clear pattern
+  return 1;
+}
+
+/**
+ * Calculate total capsules sold from orders using naming conventions
+ * @param {Array} orders - Array of order objects
+ * @returns {number} Total capsules sold
+ */
+export function calculateCapsulesSold(orders) {
+  let totalCapsulesSold = 0;
+  
+  orders.forEach(order => {
+    if (order.lineItems?.nodes) {
+      order.lineItems.nodes.forEach(item => {
+        const productTitle = item.variant?.product?.title || item.title || "";
+        const variantTitle = item.variantTitle || item.variant?.title || "";
+        const sku = item.variant?.sku || "";
+        const quantity = item.quantity || 0;
+        
+        // Calculate capsules per unit based on naming (check title, variant title, and SKU)
+        const capsulesPerUnit = calculateCapsulesFromNaming(productTitle, variantTitle, sku);
+        
+        // Total capsules = quantity ordered × capsules per unit
+        totalCapsulesSold += quantity * capsulesPerUnit;
+      });
+    }
+  });
+  
+  return totalCapsulesSold;
 }
 
 /**
