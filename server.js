@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
 
@@ -293,6 +296,80 @@ const processOrdersForStore = async (shop, dateRange, requestId, sourceFilter = 
   return finalOrders;
 };
 
+// Helper function to load capsule SKU data from JSON file
+const loadCapsuleSKUs = () => {
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const capsuleDataPath = path.join(__dirname, 'src/data/Capsules.json');
+    const capsuleData = fs.readFileSync(capsuleDataPath, 'utf8');
+    return JSON.parse(capsuleData);
+  } catch (error) {
+    console.error('Error loading capsule SKU data:', error);
+    return [];
+  }
+};
+
+// Helper function to calculate capsules sold based on SKU lookup from Capsules.json
+const calculateCapsulesFromSKU = (sku) => {
+  const capsuleSKUs = loadCapsuleSKUs();
+  
+  if (!sku) {
+    return { capsules: 0, category: 'Unknown' };
+  }
+  
+  // Find matching SKU in the data
+  const matchingSKU = capsuleSKUs.find(item => 
+    item.SKU.toLowerCase() === sku.toLowerCase()
+  );
+  
+  if (matchingSKU) {
+    return {
+      capsules: matchingSKU.Caps,
+      category: matchingSKU['Prod Cat']
+    };
+  }
+  
+  // If no exact match found, return 0
+  return { capsules: 0, category: 'Unknown' };
+};
+
+// Helper function to calculate total capsules sold from orders using SKU lookup
+const calculateCapsulesSold = (orders) => {
+  let totalCapsulesSold = 0;
+  let totalMulticapsulesSold = 0;
+  let totalEuropeanCapsulesSold = 0;
+  
+  orders.forEach(order => {
+    if (order.lineItems?.nodes) {
+      order.lineItems.nodes.forEach(item => {
+        const sku = item.variant?.sku || "";
+        const quantity = item.quantity || 0;
+        
+        // Calculate capsules per unit based on SKU lookup
+        const { capsules, category } = calculateCapsulesFromSKU(sku);
+        
+        // Total capsules = quantity ordered × capsules per unit
+        const totalCapsulesForItem = quantity * capsules;
+        totalCapsulesSold += totalCapsulesForItem;
+        
+        // Count by category
+        if (category === 'Multicapsule' || category === 'Multicapsule/ New Flavors') {
+          totalMulticapsulesSold += totalCapsulesForItem;
+        } else if (category === 'European') {
+          totalEuropeanCapsulesSold += totalCapsulesForItem;
+        }
+      });
+    }
+  });
+  
+  return {
+    totalCapsules: totalCapsulesSold,
+    totalMulticapsules: totalMulticapsulesSold,
+    totalEuropeanCapsules: totalEuropeanCapsulesSold
+  };
+};
+
 // Helper function to calculate metrics
 const calculateSourceMetrics = (orders, sourceName) => {
   let currencyCode = null;
@@ -330,6 +407,9 @@ const calculateSourceMetrics = (orders, sourceName) => {
   const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
   const productAnalysis = calculateProductAnalysis(orders);
 
+  // Calculate capsules sold using SKU lookup from Capsules.json
+  const capsuleData = calculateCapsulesSold(orders);
+
   return {
     source: sourceName,
     summary: {
@@ -339,7 +419,10 @@ const calculateSourceMetrics = (orders, sourceName) => {
       currencyCode,
       totalRefunds: parseFloat(totalRefunds.toFixed(2)),
       refundedOrders,
-      totalItemsSold
+      totalItemsSold,
+      totalCapsulesSold: capsuleData.totalCapsules,
+      totalMulticapsulesSold: capsuleData.totalMulticapsules,
+      totalEuropeanCapsulesSold: capsuleData.totalEuropeanCapsules
     },
     productAnalysis
   };
@@ -353,7 +436,6 @@ const calculateSimplifiedMetrics = (orders, sourceName) => {
   let totalOrders = orders.length;
   let refundedOrders = 0;
   let totalItemsSold = 0;
-  let totalCapsules = 0;
 
   orders.forEach((order) => {
     const currentTotal = parseFloat(
@@ -366,15 +448,6 @@ const calculateSimplifiedMetrics = (orders, sourceName) => {
     order.lineItems?.nodes?.forEach((item) => {
       const quantity = item.quantity || 0;
       totalItemsSold += quantity;
-      
-      // Count capsules - assuming capsules are identified by product type or title containing "capsule"
-      const productTitle = item.variant?.product?.title || item.title || "";
-      const productType = item.variant?.product?.productType || "";
-      
-      if (productType.toLowerCase().includes('capsule') || 
-          productTitle.toLowerCase().includes('capsule')) {
-        totalCapsules += quantity;
-      }
     });
 
     if (!currencyCode) {
@@ -391,6 +464,9 @@ const calculateSimplifiedMetrics = (orders, sourceName) => {
 
   const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
 
+  // Calculate capsules sold using SKU lookup from Capsules.json
+  const capsuleData = calculateCapsulesSold(orders);
+
   return {
     source: sourceName,
     summary: {
@@ -401,7 +477,9 @@ const calculateSimplifiedMetrics = (orders, sourceName) => {
       totalRefunds: parseFloat(totalRefunds.toFixed(2)),
       refundedOrders,
       totalItemsSold,
-      totalCapsules
+      totalCapsulesSold: capsuleData.totalCapsules,
+      totalMulticapsulesSold: capsuleData.totalMulticapsules,
+      totalEuropeanCapsulesSold: capsuleData.totalEuropeanCapsules
     }
   };
 };
@@ -981,7 +1059,9 @@ app.get("/historical/ecom", async (req, res) => {
             totalRefunds: 0,
             refundedOrders: 0,
             totalItemsSold: 0,
-            totalCapsules: 0,
+            totalCapsulesSold: 0,
+            totalMulticapsulesSold: 0,
+            totalEuropeanCapsulesSold: 0,
             error: error.message
           }
         });
@@ -1054,7 +1134,9 @@ app.get("/historical/brandstore", async (req, res) => {
             totalRefunds: 0,
             refundedOrders: 0,
             totalItemsSold: 0,
-            totalCapsules: 0,
+            totalCapsulesSold: 0,
+            totalMulticapsulesSold: 0,
+            totalEuropeanCapsulesSold: 0,
             error: error.message
           }
         });
@@ -1185,7 +1267,9 @@ app.get("/historical/vending", async (req, res) => {
             totalRefunds: 0,
             refundedOrders: 0,
             totalItemsSold: 0,
-            totalCapsules: 0,
+            totalCapsulesSold: 0,
+            totalMulticapsulesSold: 0,
+            totalEuropeanCapsulesSold: 0,
             error: error.message
           }
         });
@@ -1286,7 +1370,9 @@ app.get("/historical/collect", async (req, res) => {
             totalRefunds: 0,
             refundedOrders: 0,
             totalItemsSold: 0,
-            totalCapsules: 0,
+            totalCapsulesSold: 0,
+            totalMulticapsulesSold: 0,
+            totalEuropeanCapsulesSold: 0,
             error: error.message
           }
         });
@@ -1387,7 +1473,9 @@ app.get("/historical/franchise", async (req, res) => {
             totalRefunds: 0,
             refundedOrders: 0,
             totalItemsSold: 0,
-            totalCapsules: 0,
+            totalCapsulesSold: 0,
+            totalMulticapsulesSold: 0,
+            totalEuropeanCapsulesSold: 0,
             error: error.message
           }
         });
@@ -1488,7 +1576,9 @@ app.get("/historical/b2b", async (req, res) => {
             totalRefunds: 0,
             refundedOrders: 0,
             totalItemsSold: 0,
-            totalCapsules: 0,
+            totalCapsulesSold: 0,
+            totalMulticapsulesSold: 0,
+            totalEuropeanCapsulesSold: 0,
             error: error.message
           }
         });

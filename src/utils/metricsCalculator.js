@@ -12,7 +12,6 @@ export function calculateDetailedMetrics(orders, startISO, endISO) {
   let totalTax = 0;
   let totalShipping = 0;
   let totalUnitsSold = 0;
-  let totalCapsulesSold = 0;
   let totalOrders = orders.length;
 
   orders.forEach(order => {
@@ -50,8 +49,8 @@ export function calculateDetailedMetrics(orders, startISO, endISO) {
   // Calculate derived metrics
   const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
   
-  // Calculate capsules sold using the new naming convention logic
-  totalCapsulesSold = calculateCapsulesSold(orders);
+  // Calculate capsules sold using SKU lookup from Capsules.json
+  const capsuleData = calculateCapsulesSold(orders);
 
   return {
     summary: {
@@ -63,7 +62,9 @@ export function calculateDetailedMetrics(orders, startISO, endISO) {
       totalOrders,
       averageOrderValue: Math.round(averageOrderValue * 100) / 100,
       totalUnitsSold,
-      totalCapsulesSold,
+      totalCapsulesSold: capsuleData.totalCapsules,
+      totalMulticapsulesSold: capsuleData.totalMulticapsules,
+      totalEuropeanCapsulesSold: capsuleData.totalEuropeanCapsules,
       dateRange: {
         from: startISO.substring(0, 10),
         to: endISO.substring(0, 10),
@@ -74,134 +75,88 @@ export function calculateDetailedMetrics(orders, startISO, endISO) {
 }
 
 /**
- * Calculate capsules sold based on product naming conventions
- * @param {string} productTitle - Product title to analyze
- * @param {string} variantTitle - Variant title to analyze
- * @returns {number} Number of capsules for this product
+ * Load capsule SKU data from JSON file
+ * @returns {Array} Array of capsule SKU objects
  */
-function calculateCapsulesFromNaming(productTitle, variantTitle, sku = "") {
-  // Combine product title, variant title, and SKU for analysis
-  const fullTitle = `${productTitle || ""} ${variantTitle || ""} ${sku || ""}`.trim().toLowerCase();
-  
-  // Check if this is a capsule product based on naming prefixes
-  const capsulePrefixes = ['cap', 'tea', 'mix', 'e37', 'm51', 'espressobox', 'multibox'];
-  const isCapsuleProduct = capsulePrefixes.some(prefix => 
-    fullTitle.startsWith(prefix) || 
-    fullTitle.includes(`-${prefix}`) ||
-    fullTitle.includes(`${prefix}-`)
-  );
-  
-  if (!isCapsuleProduct) {
-    return 0;
+function loadCapsuleSKUs() {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const capsuleDataPath = path.join(__dirname, '../data/Capsules.json');
+    const capsuleData = fs.readFileSync(capsuleDataPath, 'utf8');
+    return JSON.parse(capsuleData);
+  } catch (error) {
+    console.error('Error loading capsule SKU data:', error);
+    return [];
   }
-  
-  // Special cases with exact naming patterns
-  const specialCases = {
-    'e37 - espressobox': 12,
-    'm51 - multibox': 12,
-    'espressobox': 12,
-    'multibox': 12,
-    'e37': 12,
-    'm51': 12,
-    'cap51-energy booster': 1,
-    'cap51-electrolytes': 1,
-    'cap51-14r': 1,
-    'cap37-10cr': 10,
-    'cap51-15c': 12,
-    'cap51-12cr': 12,
-    'cap51-1226': 12,
-    'cap51-1225': 12,
-    'cap51-1215': 12,
-    'cap51-1214gr': 12,
-    'cap51-25': 1,
-    'cap51-15': 1,
-    'cap36-1015': 10,
-    'tea51-15': 1,
-    'tea51-1215': 12,
-    'mix-1201': 12,
-    'mix-01': 1,
-    'mix-02-1212': 12
-  };
-  
-  // Check for exact matches first
-  for (const [pattern, capsules] of Object.entries(specialCases)) {
-    if (fullTitle.includes(pattern)) {
-      return capsules;
-    }
-  }
-  
-  // Pattern matching for 4-digit codes after dash
-  const fourDigitMatch = fullTitle.match(/-(\d{4})/);
-  if (fourDigitMatch) {
-    const fourDigitCode = fourDigitMatch[1];
-    const firstTwoDigits = parseInt(fourDigitCode.substring(0, 2));
-    
-    // Handle special cases for 4-digit codes
-    if (fourDigitCode === '1015') return 10; // cap36-1015 exception
-    if (fourDigitCode === '1215') return 12; // tea51-1215
-    if (fourDigitCode === '1225') return 12; // cap51-1225
-    if (fourDigitCode === '1226') return 12; // cap51-1226
-    if (fourDigitCode === '1214') return 12; // cap51-1214gr
-    
-    // Default rule: first two digits = capsule count
-    return firstTwoDigits;
-  }
-  
-  // Pattern matching for 2-digit codes after dash
-  const twoDigitMatch = fullTitle.match(/-(\d{2})/);
-  if (twoDigitMatch) {
-    const twoDigitCode = twoDigitMatch[1];
-    
-    // Handle special cases for 2-digit codes
-    if (twoDigitCode === '15') return 1; // cap51-15, tea51-15
-    if (twoDigitCode === '25') return 1; // cap51-25
-    if (twoDigitCode === '14') return 1; // cap51-14r
-    
-    // Default rule: 2-digit code = capsule count
-    return parseInt(twoDigitCode);
-  }
-  
-  // Single digit after dash
-  const singleDigitMatch = fullTitle.match(/-(\d{1})/);
-  if (singleDigitMatch) {
-    return parseInt(singleDigitMatch[1]);
-  }
-  
-  // If no numeric pattern found, check for specific keywords
-  if (fullTitle.includes('box') || fullTitle.includes('multibox') || fullTitle.includes('espressobox')) {
-    return 12;
-  }
-  
-  // Default: 1 capsule if it matches capsule prefixes but no clear pattern
-  return 1;
 }
 
 /**
- * Calculate total capsules sold from orders using naming conventions
+ * Calculate capsules sold based on SKU lookup from Capsules.json
+ * @param {string} sku - Product SKU to look up
+ * @returns {Object} Object with capsule count and category
+ */
+function calculateCapsulesFromSKU(sku) {
+  const capsuleSKUs = loadCapsuleSKUs();
+  
+  if (!sku) {
+    return { capsules: 0, category: 'Unknown' };
+  }
+  
+  // Find matching SKU in the data
+  const matchingSKU = capsuleSKUs.find(item => 
+    item.SKU.toLowerCase() === sku.toLowerCase()
+  );
+  
+  if (matchingSKU) {
+    return {
+      capsules: matchingSKU.Caps,
+      category: matchingSKU['Prod Cat']
+    };
+  }
+  
+  // If no exact match found, return 0
+  return { capsules: 0, category: 'Unknown' };
+}
+
+/**
+ * Calculate total capsules sold from orders using SKU lookup
  * @param {Array} orders - Array of order objects
- * @returns {number} Total capsules sold
+ * @returns {Object} Object with total capsules, multicapsules, and european capsules
  */
 export function calculateCapsulesSold(orders) {
   let totalCapsulesSold = 0;
+  let totalMulticapsulesSold = 0;
+  let totalEuropeanCapsulesSold = 0;
   
   orders.forEach(order => {
     if (order.lineItems?.nodes) {
       order.lineItems.nodes.forEach(item => {
-        const productTitle = item.variant?.product?.title || item.title || "";
-        const variantTitle = item.variantTitle || item.variant?.title || "";
         const sku = item.variant?.sku || "";
         const quantity = item.quantity || 0;
         
-        // Calculate capsules per unit based on naming (check title, variant title, and SKU)
-        const capsulesPerUnit = calculateCapsulesFromNaming(productTitle, variantTitle, sku);
+        // Calculate capsules per unit based on SKU lookup
+        const { capsules, category } = calculateCapsulesFromSKU(sku);
         
         // Total capsules = quantity ordered × capsules per unit
-        totalCapsulesSold += quantity * capsulesPerUnit;
+        const totalCapsulesForItem = quantity * capsules;
+        totalCapsulesSold += totalCapsulesForItem;
+        
+        // Count by category
+        if (category === 'Multicapsule' || category === 'Multicapsule/ New Flavors') {
+          totalMulticapsulesSold += totalCapsulesForItem;
+        } else if (category === 'European') {
+          totalEuropeanCapsulesSold += totalCapsulesForItem;
+        }
       });
     }
   });
   
-  return totalCapsulesSold;
+  return {
+    totalCapsules: totalCapsulesSold,
+    totalMulticapsules: totalMulticapsulesSold,
+    totalEuropeanCapsules: totalEuropeanCapsulesSold
+  };
 }
 
 /**

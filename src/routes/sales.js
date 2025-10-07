@@ -76,9 +76,15 @@ function calculateSourceMetrics(orders, sourceName) {
   // Calculate AOV (Average Order Value)
   const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
 
-  // Calculate capsules sold using naming conventions
-  const totalCapsulesSold = calculateCapsulesSold(orders);
-  console.log(`[DEBUG] totalCapsulesSold for ${sourceName}:`, totalCapsulesSold);
+  // Calculate capsules sold using SKU lookup from Capsules.json
+  let capsuleData;
+  try {
+    capsuleData = calculateCapsulesSold(orders);
+    console.log(`[DEBUG] capsule data for ${sourceName}:`, capsuleData);
+  } catch (error) {
+    console.error(`[ERROR] Failed to calculate capsule data for ${sourceName}:`, error);
+    capsuleData = { totalCapsules: 0, totalMulticapsules: 0, totalEuropeanCapsules: 0 };
+  }
 
   // Product Analysis
   const productAnalysis = calculateProductAnalysis(orders);
@@ -93,7 +99,9 @@ function calculateSourceMetrics(orders, sourceName) {
       totalRefunds: parseFloat(totalRefunds.toFixed(2)),
       refundedOrders,
       totalItemsSold,
-      totalCapsulesSold
+      totalCapsulesSold: capsuleData.totalCapsules,
+      totalMulticapsulesSold: capsuleData.totalMulticapsules,
+      totalEuropeanCapsulesSold: capsuleData.totalEuropeanCapsules
     },
     productAnalysis
   };
