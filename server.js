@@ -339,6 +339,7 @@ const calculateCapsulesSold = (orders) => {
   let totalCapsulesSold = 0;
   let totalMulticapsulesSold = 0;
   let totalEuropeanCapsulesSold = 0;
+  let totalTeaCapsulesSold = 0;
   
   orders.forEach(order => {
     if (order.lineItems?.nodes) {
@@ -358,6 +359,8 @@ const calculateCapsulesSold = (orders) => {
           totalMulticapsulesSold += totalCapsulesForItem;
         } else if (category === 'European') {
           totalEuropeanCapsulesSold += totalCapsulesForItem;
+        } else if (category === 'Tea') {
+          totalTeaCapsulesSold += totalCapsulesForItem;
         }
       });
     }
@@ -366,7 +369,8 @@ const calculateCapsulesSold = (orders) => {
   return {
     totalCapsules: totalCapsulesSold,
     totalMulticapsules: totalMulticapsulesSold,
-    totalEuropeanCapsules: totalEuropeanCapsulesSold
+    totalEuropeanCapsules: totalEuropeanCapsulesSold,
+    totalTeaCapsules: totalTeaCapsulesSold
   };
 };
 
@@ -422,7 +426,8 @@ const calculateSourceMetrics = (orders, sourceName) => {
       totalItemsSold,
       totalCapsulesSold: capsuleData.totalCapsules,
       totalMulticapsulesSold: capsuleData.totalMulticapsules,
-      totalEuropeanCapsulesSold: capsuleData.totalEuropeanCapsules
+      totalEuropeanCapsulesSold: capsuleData.totalEuropeanCapsules,
+      totalTeaCapsulesSold: capsuleData.totalTeaCapsules
     },
     productAnalysis
   };
@@ -479,7 +484,8 @@ const calculateSimplifiedMetrics = (orders, sourceName) => {
       totalItemsSold,
       totalCapsulesSold: capsuleData.totalCapsules,
       totalMulticapsulesSold: capsuleData.totalMulticapsules,
-      totalEuropeanCapsulesSold: capsuleData.totalEuropeanCapsules
+      totalEuropeanCapsulesSold: capsuleData.totalEuropeanCapsules,
+      totalTeaCapsulesSold: capsuleData.totalTeaCapsules
     }
   };
 };
@@ -1634,6 +1640,219 @@ app.get("/historical/b2b/:date", async (req, res) => {
   }
 });
 
+// Test endpoint for detailed capsule analysis
+app.get("/test/capsules/ecom", async (req, res) => {
+  try {
+    const { date = new Date().toISOString().split('T')[0] } = req.query;
+    const requestId = req.requestId || "unknown";
+    
+    console.log(`\n📊 [${requestId}] TEST CAPSULES ECOM - ${date}`);
+    
+    const dateRange = getDateRange(date);
+    const orders = await processOrdersForStore("ecommerce", dateRange, requestId, 'online');
+    
+    const detailedOrders = [];
+    
+    orders.forEach(order => {
+      const orderDetails = {
+        orderId: order.id,
+        orderName: order.name,
+        createdAt: order.createdAt,
+        financialStatus: order.displayFinancialStatus,
+        fulfillmentStatus: order.displayFulfillmentStatus,
+        sourceName: order.sourceName,
+        totalPrice: parseFloat(order.currentTotalPriceSet?.shopMoney?.amount || "0"),
+        currencyCode: order.currentTotalPriceSet?.shopMoney?.currencyCode,
+        refundedAmount: parseFloat(order.totalRefundedSet?.shopMoney?.amount || "0"),
+        isRefunded: parseFloat(order.totalRefundedSet?.shopMoney?.amount || "0") > 0,
+        isCanceled: order.displayFulfillmentStatus === 'CANCELED' || order.displayFinancialStatus === 'CANCELED',
+        isDraft: order.displayFinancialStatus === 'DRAFT',
+        isPartiallyRefunded: order.displayFinancialStatus === 'PARTIALLY_REFUNDED',
+        isPartiallyPaid: order.displayFinancialStatus === 'PARTIALLY_PAID',
+        isPending: order.displayFinancialStatus === 'PENDING',
+        lineItems: []
+      };
+      
+      let orderTotalCapsules = 0;
+      let orderMulticapsules = 0;
+      let orderEuropeanCapsules = 0;
+      let orderTeaCapsules = 0;
+      
+      if (order.lineItems?.nodes) {
+        order.lineItems.nodes.forEach(item => {
+          const sku = item.variant?.sku || "";
+          const quantity = item.quantity || 0;
+          const productTitle = item.variant?.product?.title || item.title || "";
+          const variantTitle = item.variantTitle || item.variant?.title || "";
+          
+          // Calculate capsules for this item
+          const { capsules, category } = calculateCapsulesFromSKU(sku);
+          const totalCapsulesForItem = quantity * capsules;
+          
+          orderTotalCapsules += totalCapsulesForItem;
+          
+          if (category === 'Multicapsule' || category === 'Multicapsule/ New Flavors') {
+            orderMulticapsules += totalCapsulesForItem;
+          } else if (category === 'European') {
+            orderEuropeanCapsules += totalCapsulesForItem;
+          } else if (category === 'Tea') {
+            orderTeaCapsules += totalCapsulesForItem;
+          }
+          
+          orderDetails.lineItems.push({
+            sku: sku,
+            productTitle: productTitle,
+            variantTitle: variantTitle,
+            quantity: quantity,
+            unitPrice: parseFloat(item.originalUnitPriceSet?.shopMoney?.amount || "0"),
+            totalPrice: quantity * parseFloat(item.originalUnitPriceSet?.shopMoney?.amount || "0"),
+            capsulesPerUnit: capsules,
+            totalCapsules: totalCapsulesForItem,
+            category: category,
+            isCapsule: capsules > 0
+          });
+        });
+      }
+      
+      orderDetails.totalCapsules = orderTotalCapsules;
+      orderDetails.totalMulticapsules = orderMulticapsules;
+      orderDetails.totalEuropeanCapsules = orderEuropeanCapsules;
+      orderDetails.totalTeaCapsules = orderTeaCapsules;
+      
+      detailedOrders.push(orderDetails);
+    });
+    
+    // Sort by total capsules (highest first)
+    detailedOrders.sort((a, b) => b.totalCapsules - a.totalCapsules);
+    
+    const response = {
+      date: date,
+      source: "Ecom",
+      totalOrders: detailedOrders.length,
+      totalCapsules: detailedOrders.reduce((sum, order) => sum + order.totalCapsules, 0),
+      totalMulticapsules: detailedOrders.reduce((sum, order) => sum + order.totalMulticapsules, 0),
+      totalEuropeanCapsules: detailedOrders.reduce((sum, order) => sum + order.totalEuropeanCapsules, 0),
+      totalTeaCapsules: detailedOrders.reduce((sum, order) => sum + order.totalTeaCapsules, 0),
+      orders: detailedOrders
+    };
+
+    console.log(`✅ [${requestId}] TEST CAPSULES ECOM - Complete: ${detailedOrders.length} orders, ${response.totalCapsules} total capsules`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating test capsules ecom data:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate test capsules ecom data",
+      message: error.message,
+    });
+  }
+});
+
+app.get("/test/capsules/brandstore", async (req, res) => {
+  try {
+    const { date = new Date().toISOString().split('T')[0] } = req.query;
+    const requestId = req.requestId || "unknown";
+    
+    console.log(`\n📊 [${requestId}] TEST CAPSULES BRANDSTORE - ${date}`);
+    
+    const dateRange = getDateRange(date);
+    const orders = await processOrdersForStore("ecommerce", dateRange, requestId, 'pos');
+    
+    const detailedOrders = [];
+    
+    orders.forEach(order => {
+      const orderDetails = {
+        orderId: order.id,
+        orderName: order.name,
+        createdAt: order.createdAt,
+        financialStatus: order.displayFinancialStatus,
+        fulfillmentStatus: order.displayFulfillmentStatus,
+        sourceName: order.sourceName,
+        totalPrice: parseFloat(order.currentTotalPriceSet?.shopMoney?.amount || "0"),
+        currencyCode: order.currentTotalPriceSet?.shopMoney?.currencyCode,
+        refundedAmount: parseFloat(order.totalRefundedSet?.shopMoney?.amount || "0"),
+        isRefunded: parseFloat(order.totalRefundedSet?.shopMoney?.amount || "0") > 0,
+        isCanceled: order.displayFulfillmentStatus === 'CANCELED' || order.displayFinancialStatus === 'CANCELED',
+        isDraft: order.displayFinancialStatus === 'DRAFT',
+        isPartiallyRefunded: order.displayFinancialStatus === 'PARTIALLY_REFUNDED',
+        isPartiallyPaid: order.displayFinancialStatus === 'PARTIALLY_PAID',
+        isPending: order.displayFinancialStatus === 'PENDING',
+        lineItems: []
+      };
+      
+      let orderTotalCapsules = 0;
+      let orderMulticapsules = 0;
+      let orderEuropeanCapsules = 0;
+      let orderTeaCapsules = 0;
+      
+      if (order.lineItems?.nodes) {
+        order.lineItems.nodes.forEach(item => {
+          const sku = item.variant?.sku || "";
+          const quantity = item.quantity || 0;
+          const productTitle = item.variant?.product?.title || item.title || "";
+          const variantTitle = item.variantTitle || item.variant?.title || "";
+          
+          // Calculate capsules for this item
+          const { capsules, category } = calculateCapsulesFromSKU(sku);
+          const totalCapsulesForItem = quantity * capsules;
+          
+          orderTotalCapsules += totalCapsulesForItem;
+          
+          if (category === 'Multicapsule' || category === 'Multicapsule/ New Flavors') {
+            orderMulticapsules += totalCapsulesForItem;
+          } else if (category === 'European') {
+            orderEuropeanCapsules += totalCapsulesForItem;
+          } else if (category === 'Tea') {
+            orderTeaCapsules += totalCapsulesForItem;
+          }
+          
+          orderDetails.lineItems.push({
+            sku: sku,
+            productTitle: productTitle,
+            variantTitle: variantTitle,
+            quantity: quantity,
+            unitPrice: parseFloat(item.originalUnitPriceSet?.shopMoney?.amount || "0"),
+            totalPrice: quantity * parseFloat(item.originalUnitPriceSet?.shopMoney?.amount || "0"),
+            capsulesPerUnit: capsules,
+            totalCapsules: totalCapsulesForItem,
+            category: category,
+            isCapsule: capsules > 0
+          });
+        });
+      }
+      
+      orderDetails.totalCapsules = orderTotalCapsules;
+      orderDetails.totalMulticapsules = orderMulticapsules;
+      orderDetails.totalEuropeanCapsules = orderEuropeanCapsules;
+      orderDetails.totalTeaCapsules = orderTeaCapsules;
+      
+      detailedOrders.push(orderDetails);
+    });
+    
+    // Sort by total capsules (highest first)
+    detailedOrders.sort((a, b) => b.totalCapsules - a.totalCapsules);
+    
+    const response = {
+      date: date,
+      source: "Brand Store",
+      totalOrders: detailedOrders.length,
+      totalCapsules: detailedOrders.reduce((sum, order) => sum + order.totalCapsules, 0),
+      totalMulticapsules: detailedOrders.reduce((sum, order) => sum + order.totalMulticapsules, 0),
+      totalEuropeanCapsules: detailedOrders.reduce((sum, order) => sum + order.totalEuropeanCapsules, 0),
+      totalTeaCapsules: detailedOrders.reduce((sum, order) => sum + order.totalTeaCapsules, 0),
+      orders: detailedOrders
+    };
+
+    console.log(`✅ [${requestId}] TEST CAPSULES BRANDSTORE - Complete: ${detailedOrders.length} orders, ${response.totalCapsules} total capsules`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating test capsules brandstore data:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate test capsules brandstore data",
+      message: error.message,
+    });
+  }
+});
+
 // Legacy redirects
 app.get('/sales-today', (req, res) => {
   res.redirect('/sales/today' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
@@ -1729,6 +1948,8 @@ const server = app.listen(PORT, () => {
   console.log(`   GET  http://localhost:${PORT}/franchise/yesterday`);
   console.log(`   GET  http://localhost:${PORT}/b2b/today`);
   console.log(`   GET  http://localhost:${PORT}/b2b/yesterday`);
+  console.log(`   GET  http://localhost:${PORT}/test/capsules/ecom?date=2025-10-06`);
+  console.log(`   GET  http://localhost:${PORT}/test/capsules/brandstore?date=2025-10-06`);
   console.log('');
   console.log('🏪 Available Shops: ecommerce, vending, collect, franchise, b2b, brandstores');
   console.log('');

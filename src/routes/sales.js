@@ -862,4 +862,252 @@ router.get("/sales/brandstore/yesterday", async (req, res) => {
   }
 });
 
+// ============================================================================
+// HISTORICAL SINGLE DAY ENDPOINTS
+// ============================================================================
+
+// GENERAL ECOM - Historical Single Day
+router.get("/general-ecom/historical/:date", async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const dateRange = getHistoricalSingleDayRange(date);
+
+    const orders = await processOrdersForStore(shop, dateRange, requestId);
+    const metrics = calculateSourceMetrics(orders, "General Ecom");
+
+    const response = {
+      date,
+      source: "General Ecom",
+      summary: metrics.summary
+    };
+
+    console.log(`✅ [${requestId}] GENERAL ECOM HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating general ecom historical metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate general ecom historical metrics",
+      message: error.message,
+    });
+  }
+});
+
+// ECOM - Historical Single Day
+router.get("/ecom/historical/:date", async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const dateRange = getHistoricalSingleDayRange(date);
+
+    const orders = await processOrdersForStore(shop, dateRange, requestId, 'online');
+    const metrics = calculateSourceMetrics(orders, "Ecom");
+
+    const response = {
+      date,
+      source: "Ecom",
+      summary: metrics.summary
+    };
+
+    console.log(`✅ [${requestId}] ECOM HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating ecom historical metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate ecom historical metrics",
+      message: error.message,
+    });
+  }
+});
+
+// BRAND STORES - Historical Single Day
+router.get("/brandstores/historical/:date", async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const dateRange = getHistoricalSingleDayRange(date);
+
+    const orders = await processOrdersForStore(shop, dateRange, requestId, 'pos');
+    const metrics = calculateSourceMetrics(orders, "Brand Stores");
+
+    const response = {
+      date,
+      source: "Brand Stores",
+      summary: metrics.summary
+    };
+
+    console.log(`✅ [${requestId}] BRAND STORES HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating brand stores historical metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate brand stores historical metrics",
+      message: error.message,
+    });
+  }
+});
+
+// VENDING - Historical Single Day
+router.get("/vending/historical/:date", async (req, res) => {
+  try {
+    const { date } = req.params;
+    const requestId = req.requestId || "unknown";
+    const dateRange = getHistoricalSingleDayRange(date);
+
+    const orders = await processOrdersForStore("vending", dateRange, requestId);
+    const metrics = calculateSourceMetrics(orders, "Vending");
+
+    const response = {
+      date,
+      source: "Vending",
+      summary: metrics.summary
+    };
+
+    console.log(`✅ [${requestId}] VENDING HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating vending historical metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate vending historical metrics",
+      message: error.message,
+    });
+  }
+});
+
+// COLLECT - Historical Single Day
+router.get("/collect/historical/:date", async (req, res) => {
+  try {
+    const { date } = req.params;
+    const requestId = req.requestId || "unknown";
+    const dateRange = getHistoricalSingleDayRange(date);
+
+    const orders = await processOrdersForStore("collect", dateRange, requestId);
+    const metrics = calculateSourceMetrics(orders, "Collect");
+
+    const response = {
+      date,
+      source: "Collect",
+      summary: metrics.summary
+    };
+
+    console.log(`✅ [${requestId}] COLLECT HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating collect historical metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate collect historical metrics",
+      message: error.message,
+    });
+  }
+});
+
+// FRANCHISE - Historical Single Day
+router.get("/franchise/historical/:date", async (req, res) => {
+  try {
+    const { date } = req.params;
+    const requestId = req.requestId || "unknown";
+    const dateRange = getHistoricalSingleDayRange(date);
+
+    const orders = await processOrdersForStore("franchise", dateRange, requestId);
+    const metrics = calculateSourceMetrics(orders, "Franchise");
+
+    const response = {
+      date,
+      source: "Franchise",
+      summary: metrics.summary
+    };
+
+    console.log(`✅ [${requestId}] FRANCHISE HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating franchise historical metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate franchise historical metrics",
+      message: error.message,
+    });
+  }
+});
+
+// B2B - Historical Single Day
+router.get("/b2b/historical/:date", async (req, res) => {
+  try {
+    const { date } = req.params;
+    const requestId = req.requestId || "unknown";
+    const dateRange = getHistoricalSingleDayRange(date);
+
+    const orders = await processOrdersForStore("b2b", dateRange, requestId);
+    const metrics = calculateSourceMetrics(orders, "B2B");
+
+    const response = {
+      date,
+      source: "B2B",
+      summary: metrics.summary
+    };
+
+    console.log(`✅ [${requestId}] B2B HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(response);
+  } catch (error) {
+    console.error("Error calculating b2b historical metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate b2b historical metrics",
+      message: error.message,
+    });
+  }
+});
+
+// ============================================================================
+// HISTORICAL MULTI-MONTH ENDPOINTS (1, 3, 6, 12 months)
+// ============================================================================
+
+// Helper function to create multi-month endpoints for a store
+function createMultiMonthEndpoints(storeName, shopType, sourceFilter = null) {
+  const periods = [
+    { name: '1month', range: getHistorical1MonthRange },
+    { name: '3months', range: getHistorical3MonthsRange },
+    { name: '6months', range: getHistorical6MonthsRange },
+    { name: '12months', range: getHistorical12MonthsRange }
+  ];
+
+  periods.forEach(period => {
+    router.get(`/${storeName}/historical/${period.name}/:endDate`, async (req, res) => {
+      try {
+        const { endDate } = req.params;
+        const { shop = shopType } = req.query;
+        const requestId = req.requestId || "unknown";
+        const dateRange = period.range(endDate);
+
+        const orders = await processOrdersForStore(shop, dateRange, requestId, sourceFilter);
+        const metrics = calculateSourceMetrics(orders, storeName);
+
+        const response = {
+          date: endDate,
+          source: storeName,
+          summary: metrics.summary
+        };
+
+        console.log(`✅ [${requestId}] ${storeName.toUpperCase()} HISTORICAL ${period.name.toUpperCase()} ${endDate} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+        res.json(response);
+      } catch (error) {
+        console.error(`Error calculating ${storeName} historical ${period.name} metrics:`, error?.response?.data || error.message);
+        res.status(500).json({
+          error: `Failed to calculate ${storeName} historical ${period.name} metrics`,
+          message: error.message,
+        });
+      }
+    });
+  });
+}
+
+// Create multi-month endpoints for all stores
+createMultiMonthEndpoints("general-ecom", "ecommerce");
+createMultiMonthEndpoints("ecom", "ecommerce", "online");
+createMultiMonthEndpoints("brandstores", "ecommerce", "pos");
+createMultiMonthEndpoints("vending", "vending");
+createMultiMonthEndpoints("collect", "collect");
+createMultiMonthEndpoints("franchise", "franchise");
+createMultiMonthEndpoints("b2b", "b2b");
+
 export default router;
