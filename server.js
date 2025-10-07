@@ -49,34 +49,6 @@ const getShopConfig = (shopType = "ecommerce") => {
   return SHOP_CONFIGS[shopType] || SHOP_CONFIGS.ecommerce;
 };
 
-// Helper function to get date ranges
-const getTodayRange = () => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const endDate = new Date(today);
-  endDate.setHours(23, 59, 59, 999);
-  return {
-    startISO: today.toISOString(),
-    endISO: endDate.toISOString(),
-    startDate: today,
-    endDate: endDate
-  };
-};
-
-const getYesterdayRange = () => {
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  yesterday.setHours(0, 0, 0, 0);
-  const endDate = new Date(yesterday);
-  endDate.setHours(23, 59, 59, 999);
-  return {
-    startISO: yesterday.toISOString(),
-    endISO: endDate.toISOString(),
-    startDate: yesterday,
-    endDate: endDate
-  };
-};
-
 // Helper function to build query string
 const buildOrderQueryString = (startISO, endISO, shop = "ecommerce") => {
   const qParts = [
@@ -113,84 +85,6 @@ const makeGraphQLRequest = async (shopConfig, query, variables = {}) => {
   }
 
   return data.data;
-};
-
-// Helper function to calculate product analysis
-const calculateProductAnalysis = (orders) => {
-  const productMap = new Map();
-
-  orders.forEach((order) => {
-    order.lineItems?.nodes?.forEach((item) => {
-      const productId = item.variant?.product?.id;
-      const productTitle = item.variant?.product?.title || item.title;
-      const variantTitle = item.variantTitle || item.variant?.title || "";
-      const fullTitle = variantTitle
-        ? `${productTitle} - ${variantTitle}`
-        : productTitle;
-      const quantity = item.quantity || 0;
-      const unitPrice = parseFloat(
-        item.originalUnitPriceSet?.shopMoney?.amount ||
-          item.discountedUnitPriceSet?.shopMoney?.amount ||
-          "0"
-      );
-      const totalPrice = quantity * unitPrice;
-
-      if (productId) {
-        if (productMap.has(productId)) {
-          const existing = productMap.get(productId);
-          existing.quantity += quantity;
-          existing.totalSales += totalPrice;
-          existing.orders += 1;
-        } else {
-          productMap.set(productId, {
-            productId,
-            title: productTitle,
-            fullTitle,
-            description: item.variant?.product?.description || "",
-            sku: item.variant?.sku || "",
-            productType: item.variant?.product?.productType || "",
-            vendor: item.variant?.product?.vendor || "",
-            quantity,
-            totalSales: totalPrice,
-            unitPrice,
-            orders: 1,
-          });
-        }
-      }
-    });
-  });
-
-  const products = Array.from(productMap.values()).sort(
-    (a, b) => b.totalSales - a.totalSales
-  );
-
-  const mostPopular = products.slice(0, 10);
-  const leastPopular = products.slice(-10).reverse();
-
-  return {
-    mostPopular: mostPopular.map((p) => ({
-      title: p.fullTitle,
-      description: p.description,
-      quantity: p.quantity,
-      totalSales: parseFloat(p.totalSales.toFixed(2)),
-      unitPrice: parseFloat(p.unitPrice.toFixed(2)),
-      orders: p.orders,
-      sku: p.sku,
-      productType: p.productType,
-      vendor: p.vendor,
-    })),
-    leastPopular: leastPopular.map((p) => ({
-      title: p.fullTitle,
-      description: p.description,
-      quantity: p.quantity,
-      totalSales: parseFloat(p.totalSales.toFixed(2)),
-      unitPrice: parseFloat(p.unitPrice.toFixed(2)),
-      orders: p.orders,
-      sku: p.sku,
-      productType: p.productType,
-      vendor: p.vendor,
-    })),
-  };
 };
 
 // Helper function to process orders
@@ -359,7 +253,7 @@ const calculateCapsulesSold = (orders) => {
           totalMulticapsulesSold += totalCapsulesForItem;
         } else if (category === 'European') {
           totalEuropeanCapsulesSold += totalCapsulesForItem;
-        } else if (category === 'Tea') {
+        } else if (category === 'Tea' || category === 'Tea Capsules') {
           totalTeaCapsulesSold += totalCapsulesForItem;
         }
       });
@@ -374,173 +268,8 @@ const calculateCapsulesSold = (orders) => {
   };
 };
 
-// Helper function to calculate metrics
-const calculateSourceMetrics = (orders, sourceName) => {
-  let currencyCode = null;
-  let totalSales = 0;
-  let totalRefunds = 0;
-  let totalOrders = orders.length;
-  let refundedOrders = 0;
-  let totalItemsSold = 0;
-
-  orders.forEach((order) => {
-    const currentTotal = parseFloat(
-      order.currentTotalPriceSet?.shopMoney?.amount || "0"
-    );
-    const refunded = parseFloat(
-      order.totalRefundedSet?.shopMoney?.amount || "0"
-    );
-
-    order.lineItems?.nodes?.forEach((item) => {
-      const quantity = item.quantity || 0;
-      totalItemsSold += quantity;
-    });
-
-    if (!currencyCode) {
-      currencyCode = order.totalPriceSet?.shopMoney?.currencyCode;
-    }
-
-    totalSales += currentTotal;
-    totalRefunds += refunded;
-    
-    if (refunded > 0) {
-      refundedOrders++;
-    }
-  });
-
-  const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
-  const productAnalysis = calculateProductAnalysis(orders);
-
-  // Calculate capsules sold using SKU lookup from Capsules.json
-  const capsuleData = calculateCapsulesSold(orders);
-
-  return {
-    source: sourceName,
-    summary: {
-      totalSales: parseFloat(totalSales.toFixed(2)),
-      totalOrders,
-      averageOrderValue: parseFloat(averageOrderValue.toFixed(2)),
-      currencyCode,
-      totalRefunds: parseFloat(totalRefunds.toFixed(2)),
-      refundedOrders,
-      totalItemsSold,
-      totalCapsulesSold: capsuleData.totalCapsules,
-      totalMulticapsulesSold: capsuleData.totalMulticapsules,
-      totalEuropeanCapsulesSold: capsuleData.totalEuropeanCapsules,
-      totalTeaCapsulesSold: capsuleData.totalTeaCapsules
-    },
-    productAnalysis
-  };
-};
-
-// Helper function to calculate simplified metrics (without product analysis)
-const calculateSimplifiedMetrics = (orders, sourceName) => {
-  let currencyCode = null;
-  let totalSales = 0;
-  let totalRefunds = 0;
-  let totalOrders = orders.length;
-  let refundedOrders = 0;
-  let totalItemsSold = 0;
-
-  orders.forEach((order) => {
-    const currentTotal = parseFloat(
-      order.currentTotalPriceSet?.shopMoney?.amount || "0"
-    );
-    const refunded = parseFloat(
-      order.totalRefundedSet?.shopMoney?.amount || "0"
-    );
-
-    order.lineItems?.nodes?.forEach((item) => {
-      const quantity = item.quantity || 0;
-      totalItemsSold += quantity;
-    });
-
-    if (!currencyCode) {
-      currencyCode = order.totalPriceSet?.shopMoney?.currencyCode;
-    }
-
-    totalSales += currentTotal;
-    totalRefunds += refunded;
-    
-    if (refunded > 0) {
-      refundedOrders++;
-    }
-  });
-
-  const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
-
-  // Calculate capsules sold using SKU lookup from Capsules.json
-  const capsuleData = calculateCapsulesSold(orders);
-
-  return {
-    source: sourceName,
-    summary: {
-      totalSales: parseFloat(totalSales.toFixed(2)),
-      totalOrders,
-      averageOrderValue: parseFloat(averageOrderValue.toFixed(2)),
-      currencyCode,
-      totalRefunds: parseFloat(totalRefunds.toFixed(2)),
-      refundedOrders,
-      totalItemsSold,
-      totalCapsulesSold: capsuleData.totalCapsules,
-      totalMulticapsulesSold: capsuleData.totalMulticapsules,
-      totalEuropeanCapsulesSold: capsuleData.totalEuropeanCapsules,
-      totalTeaCapsulesSold: capsuleData.totalTeaCapsules
-    }
-  };
-};
-
-// Helper function to get date range for a specific date
-const getDateRange = (date) => {
-  // Parse the date string and create UTC dates to avoid timezone issues
-  const targetDate = new Date(date + 'T00:00:00.000Z'); // Force UTC
-  const endDate = new Date(date + 'T23:59:59.999Z'); // Force UTC
-  
-  return {
-    startISO: targetDate.toISOString(),
-    endISO: endDate.toISOString(),
-    startDate: targetDate,
-    endDate: endDate
-  };
-};
-
-// Helper function to generate date range for past months
-const getPastMonthsDateRange = (months = 3) => {
-  const now = new Date();
-  const endDate = new Date(now);
-  endDate.setUTCDate(endDate.getUTCDate() - 1); // Yesterday in UTC
-  endDate.setUTCHours(23, 59, 59, 999);
-  
-  const startDate = new Date(now);
-  startDate.setUTCMonth(startDate.getUTCMonth() - months);
-  startDate.setUTCDate(1);
-  startDate.setUTCHours(0, 0, 0, 0);
-  
-  return {
-    startISO: startDate.toISOString(),
-    endISO: endDate.toISOString(),
-    startDate,
-    endDate
-  };
-};
-
-// Helper function to get all dates in a range
-const getAllDatesInRange = (startDate, endDate) => {
-  const dates = [];
-  const currentDate = new Date(startDate);
-  
-  while (currentDate <= endDate) {
-    // Create a date string in YYYY-MM-DD format for consistent UTC handling
-    const dateStr = currentDate.toISOString().split('T')[0];
-    dates.push(new Date(dateStr + 'T00:00:00.000Z'));
-    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
-  }
-  
-  return dates;
-};
-
 // ============================================================================
-// ENDPOINTS
+// CORE ENDPOINTS
 // ============================================================================
 
 // Health check
@@ -579,1288 +308,456 @@ app.get('/shops', (req, res) => {
   }
 });
 
-// Test endpoint
-app.get('/test', async (req, res) => {
-  try {
-    const shopConfig = getShopConfig('ecommerce');
-    const query = `
-      query {
-        shop {
-          id
-          name
-          email
-          domain
-          currencyCode
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Shopify Historical Data API Server',
+    version: '1.0.0',
+    availableEndpoints: [
+      'GET /health - Health check and environment status',
+      'GET /shops - List available shops and their configuration',
+      'GET /historical/general-ecom/:date - Historical single day data for general ecommerce',
+      'GET /historical/ecom/:date - Historical single day data for ecommerce (online only)',
+      'GET /historical/brandstores/:date - Historical single day data for brand stores (POS only)',
+      'GET /historical/vending/:date - Historical single day data for vending store',
+      'GET /historical/collect/:date - Historical single day data for collect store',
+      'GET /historical/franchise/:date - Historical single day data for franchise store',
+      'GET /historical/b2b/:date - Historical single day data for B2B store'
+    ]
+  });
+});
+
+// ============================================================================
+// HISTORICAL PAST MONTH ENDPOINTS (MUST BE BEFORE SINGLE DAY ENDPOINTS)
+// ============================================================================
+
+// Helper function to get all dates in a range
+const getAllDatesInRange = (startDate, endDate) => {
+  const dates = [];
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
+  // Simple loop using date strings
+  const startStr = start.toISOString().split('T')[0];
+  const endStr = end.toISOString().split('T')[0];
+  
+  let currentStr = startStr;
+  while (currentStr <= endStr) {
+    const newDate = new Date(currentStr + 'T00:00:00.000Z');
+    dates.push(newDate);
+    
+    // Increment date string
+    const currentDate = new Date(currentStr);
+    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+    currentStr = currentDate.toISOString().split('T')[0];
+  }
+  
+  return dates;
+};
+
+// Helper function to get past month (complete) date range
+const getPastMonthCompleteRange = () => {
+  const now = new Date();
+  const currentMonth = now.getUTCMonth();
+  const currentYear = now.getUTCFullYear();
+  
+  // Get previous month
+  const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+  const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+  
+  // First day of previous month
+  const startDate = new Date(Date.UTC(prevYear, prevMonth, 1, 0, 0, 0, 0));
+  
+  // Last day of previous month
+  const endDate = new Date(Date.UTC(prevYear, prevMonth + 1, 0, 23, 59, 59, 999));
+  
+  return { startDate, endDate };
+};
+
+// Helper function to get past month (including current) date range
+const getPastMonthIncludingCurrentRange = () => {
+  const now = new Date();
+  const currentMonth = now.getUTCMonth();
+  const currentYear = now.getUTCFullYear();
+  const currentDay = now.getUTCDate();
+  
+  // Get previous month
+  const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+  const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+  
+  // First day of previous month
+  const startDate = new Date(Date.UTC(prevYear, prevMonth, 1, 0, 0, 0, 0));
+  
+  // Yesterday (to avoid including today's incomplete data)
+  const endDate = new Date(Date.UTC(currentYear, currentMonth, currentDay - 1, 23, 59, 59, 999));
+  
+  return { startDate, endDate };
+};
+
+// Helper function to process historical data for multiple days
+const processHistoricalDataForDays = async (dates, shop, sourceFilter, sourceName, requestId) => {
+  const historicalData = [];
+  const totalDays = dates.length;
+  let processedDays = 0;
+
+  console.log(`\n📊 [${requestId}] Starting ${sourceName} historical data processing for ${totalDays} days...`);
+
+  for (const date of dates) {
+    try {
+      const dateStr = date.toISOString().split('T')[0];
+      console.log(`   📅 [${processedDays + 1}/${totalDays}] Processing ${dateStr}...`);
+      
+      // Validate date string
+      if (!dateStr || dateStr.length !== 10 || !dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        console.error(`   ❌ Invalid date string: ${dateStr}`);
+        continue;
+      }
+      
+      const dateRange = getHistoricalDateRange(dateStr);
+      
+      const orders = await processOrdersForStore(shop, dateRange, requestId, sourceFilter);
+      const metrics = calculateHistoricalMetrics(orders, sourceName);
+      metrics.date = dateStr;
+      
+      historicalData.push(metrics);
+      processedDays++;
+      
+      console.log(`   ✅ [${processedDays}/${totalDays}] ${dateStr} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+      
+      // Small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+    } catch (error) {
+      console.error(`   ❌ [${processedDays + 1}/${totalDays}] Error processing ${date.toISOString().split('T')[0]}:`, error.message);
+      historicalData.push({
+        date: date.toISOString().split('T')[0],
+        source: sourceName,
+        summary: {
+          totalSales: 0,
+          totalOrders: 0,
+          averageOrderValue: 0,
+          currencyCode: "GEL",
+          totalRefunds: 0,
+          refundedOrders: 0,
+          totalItemsSold: 0,
+          totalCapsulesSold: 0,
+          totalMulticapsulesSold: 0,
+          totalEuropeanCapsulesSold: 0,
+          totalTeaCapsulesSold: 0,
+          error: error.message
         }
-      }
-    `;
-    
-    const shopInfo = await makeGraphQLRequest(shopConfig, query);
-    
-    res.json({
-      success: true,
-      message: 'Environment is properly configured',
-      shopInfo,
-      environment: {
-        valid: true,
-        shop: shopConfig.shop,
-        hasToken: !!shopConfig.accessToken
-      }
-    });
-  } catch (error) {
-    console.error('❌ Test failed:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      environment: {
-        valid: false,
-        message: 'Environment check failed'
-      }
-    });
+      });
+      processedDays++;
+    }
   }
-});
 
-// Sales endpoints
-app.get("/sales/today", async (req, res) => {
+  console.log(`\n🎉 [${requestId}] ${sourceName} historical data processing complete! Processed ${processedDays}/${totalDays} days.`);
+  return historicalData;
+};
+
+// GENERAL ECOM - Past Month (Complete)
+app.get("/historical/general-ecom/past-month", async (req, res) => {
   try {
     const { shop = "ecommerce" } = req.query;
     const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getTodayRange();
-
-    const orders = await processOrdersForStore(shop, getTodayRange(), requestId);
-    const metrics = calculateSourceMetrics(orders, "General Ecom");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] SALES TODAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating sales today metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate sales today metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/sales/yesterday", async (req, res) => {
-  try {
-    const { shop = "ecommerce" } = req.query;
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getYesterdayRange();
-
-    const orders = await processOrdersForStore(shop, getYesterdayRange(), requestId);
-    const metrics = calculateSourceMetrics(orders, "General Ecom");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] SALES YESTERDAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating sales yesterday metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate sales yesterday metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/sales/ecom/today", async (req, res) => {
-  try {
-    const { shop = "ecommerce" } = req.query;
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getTodayRange();
-
-    const orders = await processOrdersForStore(shop, getTodayRange(), requestId, 'online');
-    const metrics = calculateSourceMetrics(orders, "Ecom");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] SALES ECOM TODAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating sales ecom today metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate sales ecom today metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/sales/ecom/yesterday", async (req, res) => {
-  try {
-    const { shop = "ecommerce" } = req.query;
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getYesterdayRange();
-
-    const orders = await processOrdersForStore(shop, getYesterdayRange(), requestId, 'online');
-    const metrics = calculateSourceMetrics(orders, "Ecom");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] SALES ECOM YESTERDAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating sales ecom yesterday metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate sales ecom yesterday metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/sales/brandstore/today", async (req, res) => {
-  try {
-    const { shop = "ecommerce" } = req.query;
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getTodayRange();
-
-    const orders = await processOrdersForStore(shop, getTodayRange(), requestId, 'pos');
-    const metrics = calculateSourceMetrics(orders, "Brand Stores");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] SALES BRAND STORE TODAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating sales brand store today metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate sales brand store today metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/sales/brandstore/yesterday", async (req, res) => {
-  try {
-    const { shop = "ecommerce" } = req.query;
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getYesterdayRange();
-
-    const orders = await processOrdersForStore(shop, getYesterdayRange(), requestId, 'pos');
-    const metrics = calculateSourceMetrics(orders, "Brand Stores");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] SALES BRAND STORE YESTERDAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating sales brand store yesterday metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate sales brand store yesterday metrics",
-      message: error.message,
-    });
-  }
-});
-
-// Other store endpoints
-app.get("/vending/today", async (req, res) => {
-  try {
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getTodayRange();
-
-    const orders = await processOrdersForStore("vending", getTodayRange(), requestId);
-    const metrics = calculateSourceMetrics(orders, "Vending");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] VENDING TODAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating vending today metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate vending today metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/vending/yesterday", async (req, res) => {
-  try {
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getYesterdayRange();
-
-    const orders = await processOrdersForStore("vending", getYesterdayRange(), requestId);
-    const metrics = calculateSourceMetrics(orders, "Vending");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] VENDING YESTERDAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating vending yesterday metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate vending yesterday metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/collect/today", async (req, res) => {
-  try {
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getTodayRange();
-
-    const orders = await processOrdersForStore("collect", getTodayRange(), requestId);
-    const metrics = calculateSourceMetrics(orders, "Collect");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] COLLECT TODAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating collect today metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate collect today metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/collect/yesterday", async (req, res) => {
-  try {
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getYesterdayRange();
-
-    const orders = await processOrdersForStore("collect", getYesterdayRange(), requestId);
-    const metrics = calculateSourceMetrics(orders, "Collect");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] COLLECT YESTERDAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating collect yesterday metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate collect yesterday metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/franchise/today", async (req, res) => {
-  try {
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getTodayRange();
-
-    const orders = await processOrdersForStore("franchise", getTodayRange(), requestId);
-    const metrics = calculateSourceMetrics(orders, "Franchise");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] FRANCHISE TODAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating franchise today metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate franchise today metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/franchise/yesterday", async (req, res) => {
-  try {
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getYesterdayRange();
-
-    const orders = await processOrdersForStore("franchise", getYesterdayRange(), requestId);
-    const metrics = calculateSourceMetrics(orders, "Franchise");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] FRANCHISE YESTERDAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating franchise yesterday metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate franchise yesterday metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/b2b/today", async (req, res) => {
-  try {
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getTodayRange();
-
-    const orders = await processOrdersForStore("b2b", getTodayRange(), requestId);
-    const metrics = calculateSourceMetrics(orders, "B2B");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] B2B TODAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating b2b today metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate b2b today metrics",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/b2b/yesterday", async (req, res) => {
-  try {
-    const requestId = req.requestId || "unknown";
-    const { startISO, endISO } = getYesterdayRange();
-
-    const orders = await processOrdersForStore("b2b", getYesterdayRange(), requestId);
-    const metrics = calculateSourceMetrics(orders, "B2B");
-
-    const response = {
-      dateRange: {
-        from: startISO.substring(0, 10),
-        to: endISO.substring(0, 10),
-        lastUpdated: new Date().toISOString(),
-      },
-      ...metrics
-    };
-
-    console.log(`✅ [${requestId}] B2B YESTERDAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating b2b yesterday metrics:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate b2b yesterday metrics",
-      message: error.message,
-    });
-  }
-});
-
-// Historical data endpoints
-app.get("/historical/ecom", async (req, res) => {
-  try {
-    const { months = 3, shop = "ecommerce" } = req.query;
-    const requestId = req.requestId || "unknown";
-    const monthsNum = parseInt(months);
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL ECOM - Starting data fetch for ${monthsNum} months`);
-    
-    const { startDate, endDate } = getPastMonthsDateRange(monthsNum);
+    const { startDate, endDate } = getPastMonthCompleteRange();
     const allDates = getAllDatesInRange(startDate, endDate);
     
-    const historicalData = [];
-    
-    for (const date of allDates) {
-      try {
-        const dateStr = date.toISOString().split('T')[0];
-        const dateRange = getDateRange(date);
-        
-        console.log(`   📅 Processing ${dateStr}...`);
-        
-        const orders = await processOrdersForStore(shop, dateRange, requestId, 'online');
-        const metrics = calculateSimplifiedMetrics(orders, "Ecom");
-        
-        historicalData.push({
-          date: dateStr,
-          ...metrics
-        });
-        
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-      } catch (error) {
-        console.error(`   ❌ Error processing ${date.toISOString().split('T')[0]}:`, error.message);
-        historicalData.push({
-          date: date.toISOString().split('T')[0],
-          source: "Ecom",
-          summary: {
-            totalSales: 0,
-            totalOrders: 0,
-            averageOrderValue: 0,
-            currencyCode: "GEL",
-            totalRefunds: 0,
-            refundedOrders: 0,
-            totalItemsSold: 0,
-            totalCapsulesSold: 0,
-            totalMulticapsulesSold: 0,
-            totalEuropeanCapsulesSold: 0,
-            error: error.message
-          }
-        });
-      }
-    }
+    const historicalData = await processHistoricalDataForDays(allDates, shop, null, "General Ecom", requestId);
     
     const response = {
+      period: "past-month-complete",
       dateRange: {
         from: startDate.toISOString().split('T')[0],
         to: endDate.toISOString().split('T')[0],
-        lastUpdated: new Date().toISOString(),
         totalDays: historicalData.length
       },
-      source: "Ecom",
+      source: "General Ecom",
       data: historicalData
     };
 
-    console.log(`✅ [${requestId}] HISTORICAL ECOM - Complete: ${historicalData.length} days processed`);
     res.json(response);
   } catch (error) {
-    console.error("Error calculating historical ecom data:", error?.response?.data || error.message);
+    console.error("Error calculating general ecom past month data:", error?.response?.data || error.message);
     res.status(500).json({
-      error: "Failed to calculate historical ecom data",
+      error: "Failed to calculate general ecom past month data",
       message: error.message,
     });
   }
 });
 
-app.get("/historical/brandstore", async (req, res) => {
+// GENERAL ECOM - Past Month (Including Current)
+app.get("/historical/general-ecom/past-month-current", async (req, res) => {
   try {
-    const { months = 3, shop = "ecommerce" } = req.query;
+    const { shop = "ecommerce" } = req.query;
     const requestId = req.requestId || "unknown";
-    const monthsNum = parseInt(months);
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL BRANDSTORE - Starting data fetch for ${monthsNum} months`);
-    
-    const { startDate, endDate } = getPastMonthsDateRange(monthsNum);
+    const { startDate, endDate } = getPastMonthIncludingCurrentRange();
     const allDates = getAllDatesInRange(startDate, endDate);
     
-    const historicalData = [];
-    
-    for (const date of allDates) {
-      try {
-        const dateStr = date.toISOString().split('T')[0];
-        const dateRange = getDateRange(date);
-        
-        console.log(`   📅 Processing ${dateStr}...`);
-        
-        const orders = await processOrdersForStore(shop, dateRange, requestId, 'pos');
-        const metrics = calculateSimplifiedMetrics(orders, "Brand Stores");
-        
-        historicalData.push({
-          date: dateStr,
-          ...metrics
-        });
-        
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-      } catch (error) {
-        console.error(`   ❌ Error processing ${date.toISOString().split('T')[0]}:`, error.message);
-        historicalData.push({
-          date: date.toISOString().split('T')[0],
-          source: "Brand Stores",
-          summary: {
-            totalSales: 0,
-            totalOrders: 0,
-            averageOrderValue: 0,
-            currencyCode: "GEL",
-            totalRefunds: 0,
-            refundedOrders: 0,
-            totalItemsSold: 0,
-            totalCapsulesSold: 0,
-            totalMulticapsulesSold: 0,
-            totalEuropeanCapsulesSold: 0,
-            error: error.message
-          }
-        });
-      }
-    }
+    const historicalData = await processHistoricalDataForDays(allDates, shop, null, "General Ecom", requestId);
     
     const response = {
+      period: "past-month-including-current",
       dateRange: {
         from: startDate.toISOString().split('T')[0],
         to: endDate.toISOString().split('T')[0],
-        lastUpdated: new Date().toISOString(),
         totalDays: historicalData.length
       },
-      source: "Brand Stores",
+      source: "General Ecom",
       data: historicalData
     };
 
-    console.log(`✅ [${requestId}] HISTORICAL BRANDSTORE - Complete: ${historicalData.length} days processed`);
     res.json(response);
   } catch (error) {
-    console.error("Error calculating historical brandstore data:", error?.response?.data || error.message);
+    console.error("Error calculating general ecom past month including current data:", error?.response?.data || error.message);
     res.status(500).json({
-      error: "Failed to calculate historical brandstore data",
+      error: "Failed to calculate general ecom past month including current data",
       message: error.message,
     });
   }
 });
 
-// Single day historical endpoint
+// ============================================================================
+// HISTORICAL SINGLE DAY ENDPOINTS
+// ============================================================================
+
+// Helper function to get date range for a specific date
+const getHistoricalDateRange = (date) => {
+  // Validate date string format
+  if (!date || !date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    throw new Error(`Invalid date format: ${date}`);
+  }
+  
+  const targetDate = new Date(date + 'T00:00:00.000Z');
+  const endDate = new Date(date + 'T23:59:59.999Z');
+  
+  // Validate that dates are valid
+  if (isNaN(targetDate.getTime()) || isNaN(endDate.getTime())) {
+    throw new Error(`Invalid date values: ${date}`);
+  }
+  
+  return {
+    startISO: targetDate.toISOString(),
+    endISO: endDate.toISOString(),
+    startDate: targetDate,
+    endDate: endDate
+  };
+};
+
+// Helper function to calculate simplified metrics for historical data
+const calculateHistoricalMetrics = (orders, sourceName) => {
+  let currencyCode = null;
+  let totalSales = 0;
+  let totalRefunds = 0;
+  let totalOrders = orders.length;
+  let refundedOrders = 0;
+  let totalItemsSold = 0;
+
+  orders.forEach((order) => {
+    const currentTotal = parseFloat(
+      order.currentTotalPriceSet?.shopMoney?.amount || "0"
+    );
+    const refunded = parseFloat(
+      order.totalRefundedSet?.shopMoney?.amount || "0"
+    );
+
+    order.lineItems?.nodes?.forEach((item) => {
+      const quantity = item.quantity || 0;
+      totalItemsSold += quantity;
+    });
+
+    if (!currencyCode) {
+      currencyCode = order.totalPriceSet?.shopMoney?.currencyCode;
+    }
+
+    totalSales += currentTotal;
+    totalRefunds += refunded;
+    
+    if (refunded > 0) {
+      refundedOrders++;
+    }
+  });
+
+  const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
+  const capsuleData = calculateCapsulesSold(orders);
+
+  return {
+    date: null, // Will be set by the endpoint
+    source: sourceName,
+    summary: {
+      totalSales: parseFloat(totalSales.toFixed(2)),
+      totalOrders,
+      averageOrderValue: parseFloat(averageOrderValue.toFixed(2)),
+      currencyCode,
+      totalRefunds: parseFloat(totalRefunds.toFixed(2)),
+      refundedOrders,
+      totalItemsSold,
+      totalCapsulesSold: capsuleData.totalCapsules,
+      totalMulticapsulesSold: capsuleData.totalMulticapsules,
+      totalEuropeanCapsulesSold: capsuleData.totalEuropeanCapsules,
+      totalTeaCapsulesSold: capsuleData.totalTeaCapsules
+    }
+  };
+};
+
+// GENERAL ECOM - Historical Single Day
+app.get("/historical/general-ecom/:date", async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { shop = "ecommerce" } = req.query;
+    const requestId = req.requestId || "unknown";
+    const dateRange = getHistoricalDateRange(date);
+
+    const orders = await processOrdersForStore(shop, dateRange, requestId);
+    const metrics = calculateHistoricalMetrics(orders, "General Ecom");
+    metrics.date = date;
+
+    console.log(`✅ [${requestId}] GENERAL ECOM HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(metrics);
+  } catch (error) {
+    console.error("Error calculating general ecom historical metrics:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to calculate general ecom historical metrics",
+      message: error.message,
+    });
+  }
+});
+
+// ECOM - Historical Single Day (Online Only)
 app.get("/historical/ecom/:date", async (req, res) => {
   try {
     const { date } = req.params;
     const { shop = "ecommerce" } = req.query;
     const requestId = req.requestId || "unknown";
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL ECOM SINGLE DAY - ${date}`);
-    
-    const dateRange = getDateRange(date);
-    const orders = await processOrdersForStore(shop, dateRange, requestId, 'online');
-    const metrics = calculateSimplifiedMetrics(orders, "Ecom");
-    
-    const response = {
-      date: date,
-      ...metrics
-    };
+    const dateRange = getHistoricalDateRange(date);
 
-    console.log(`✅ [${requestId}] HISTORICAL ECOM SINGLE DAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
+    const orders = await processOrdersForStore(shop, dateRange, requestId, 'online');
+    const metrics = calculateHistoricalMetrics(orders, "Ecom");
+    metrics.date = date;
+
+    console.log(`✅ [${requestId}] ECOM HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(metrics);
   } catch (error) {
-    console.error("Error calculating historical ecom single day data:", error?.response?.data || error.message);
+    console.error("Error calculating ecom historical metrics:", error?.response?.data || error.message);
     res.status(500).json({
-      error: "Failed to calculate historical ecom single day data",
+      error: "Failed to calculate ecom historical metrics",
       message: error.message,
     });
   }
 });
 
-app.get("/historical/brandstore/:date", async (req, res) => {
+// BRAND STORES - Historical Single Day (POS Only)
+app.get("/historical/brandstores/:date", async (req, res) => {
   try {
     const { date } = req.params;
     const { shop = "ecommerce" } = req.query;
     const requestId = req.requestId || "unknown";
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL BRANDSTORE SINGLE DAY - ${date}`);
-    
-    const dateRange = getDateRange(date);
+    const dateRange = getHistoricalDateRange(date);
+
     const orders = await processOrdersForStore(shop, dateRange, requestId, 'pos');
-    const metrics = calculateSimplifiedMetrics(orders, "Brand Stores");
-    
-    const response = {
-      date: date,
-      ...metrics
-    };
+    const metrics = calculateHistoricalMetrics(orders, "Brand Stores");
+    metrics.date = date;
 
-    console.log(`✅ [${requestId}] HISTORICAL BRANDSTORE SINGLE DAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
+    console.log(`✅ [${requestId}] BRAND STORES HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(metrics);
   } catch (error) {
-    console.error("Error calculating historical brandstore single day data:", error?.response?.data || error.message);
+    console.error("Error calculating brand stores historical metrics:", error?.response?.data || error.message);
     res.status(500).json({
-      error: "Failed to calculate historical brandstore single day data",
+      error: "Failed to calculate brand stores historical metrics",
       message: error.message,
     });
   }
 });
 
-// Vending store historical endpoints
-app.get("/historical/vending", async (req, res) => {
-  try {
-    const { months = 3 } = req.query;
-    const requestId = req.requestId || "unknown";
-    const monthsNum = parseInt(months);
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL VENDING - Starting data fetch for ${monthsNum} months`);
-    
-    const { startDate, endDate } = getPastMonthsDateRange(monthsNum);
-    const allDates = getAllDatesInRange(startDate, endDate);
-    
-    const historicalData = [];
-    
-    for (const date of allDates) {
-      try {
-        const dateStr = date.toISOString().split('T')[0];
-        const dateRange = getDateRange(date);
-        
-        console.log(`   📅 Processing ${dateStr}...`);
-        
-        const orders = await processOrdersForStore("vending", dateRange, requestId);
-        const metrics = calculateSimplifiedMetrics(orders, "Vending");
-        
-        historicalData.push({
-          date: dateStr,
-          ...metrics
-        });
-        
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-      } catch (error) {
-        console.error(`   ❌ Error processing ${date.toISOString().split('T')[0]}:`, error.message);
-        historicalData.push({
-          date: date.toISOString().split('T')[0],
-          source: "Vending",
-          summary: {
-            totalSales: 0,
-            totalOrders: 0,
-            averageOrderValue: 0,
-            currencyCode: "GEL",
-            totalRefunds: 0,
-            refundedOrders: 0,
-            totalItemsSold: 0,
-            totalCapsulesSold: 0,
-            totalMulticapsulesSold: 0,
-            totalEuropeanCapsulesSold: 0,
-            error: error.message
-          }
-        });
-      }
-    }
-    
-    const response = {
-      dateRange: {
-        from: startDate.toISOString().split('T')[0],
-        to: endDate.toISOString().split('T')[0],
-        lastUpdated: new Date().toISOString(),
-        totalDays: historicalData.length
-      },
-      source: "Vending",
-      data: historicalData
-    };
-
-    console.log(`✅ [${requestId}] HISTORICAL VENDING - Complete: ${historicalData.length} days processed`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating historical vending data:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate historical vending data",
-      message: error.message,
-    });
-  }
-});
-
+// VENDING - Historical Single Day
 app.get("/historical/vending/:date", async (req, res) => {
   try {
     const { date } = req.params;
     const requestId = req.requestId || "unknown";
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL VENDING SINGLE DAY - ${date}`);
-    
-    const dateRange = getDateRange(date);
+    const dateRange = getHistoricalDateRange(date);
+
     const orders = await processOrdersForStore("vending", dateRange, requestId);
-    const metrics = calculateSimplifiedMetrics(orders, "Vending");
-    
-    const response = {
-      date: date,
-      ...metrics
-    };
+    const metrics = calculateHistoricalMetrics(orders, "Vending");
+    metrics.date = date;
 
-    console.log(`✅ [${requestId}] HISTORICAL VENDING SINGLE DAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
+    console.log(`✅ [${requestId}] VENDING HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(metrics);
   } catch (error) {
-    console.error("Error calculating historical vending single day data:", error?.response?.data || error.message);
+    console.error("Error calculating vending historical metrics:", error?.response?.data || error.message);
     res.status(500).json({
-      error: "Failed to calculate historical vending single day data",
+      error: "Failed to calculate vending historical metrics",
       message: error.message,
     });
   }
 });
 
-// Collect store historical endpoints
-app.get("/historical/collect", async (req, res) => {
-  try {
-    const { months = 3 } = req.query;
-    const requestId = req.requestId || "unknown";
-    const monthsNum = parseInt(months);
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL COLLECT - Starting data fetch for ${monthsNum} months`);
-    
-    const { startDate, endDate } = getPastMonthsDateRange(monthsNum);
-    const allDates = getAllDatesInRange(startDate, endDate);
-    
-    const historicalData = [];
-    
-    for (const date of allDates) {
-      try {
-        const dateStr = date.toISOString().split('T')[0];
-        const dateRange = getDateRange(date);
-        
-        console.log(`   📅 Processing ${dateStr}...`);
-        
-        const orders = await processOrdersForStore("collect", dateRange, requestId);
-        const metrics = calculateSimplifiedMetrics(orders, "Collect");
-        
-        historicalData.push({
-          date: dateStr,
-          ...metrics
-        });
-        
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-      } catch (error) {
-        console.error(`   ❌ Error processing ${date.toISOString().split('T')[0]}:`, error.message);
-        historicalData.push({
-          date: date.toISOString().split('T')[0],
-          source: "Collect",
-          summary: {
-            totalSales: 0,
-            totalOrders: 0,
-            averageOrderValue: 0,
-            currencyCode: "GEL",
-            totalRefunds: 0,
-            refundedOrders: 0,
-            totalItemsSold: 0,
-            totalCapsulesSold: 0,
-            totalMulticapsulesSold: 0,
-            totalEuropeanCapsulesSold: 0,
-            error: error.message
-          }
-        });
-      }
-    }
-    
-    const response = {
-      dateRange: {
-        from: startDate.toISOString().split('T')[0],
-        to: endDate.toISOString().split('T')[0],
-        lastUpdated: new Date().toISOString(),
-        totalDays: historicalData.length
-      },
-      source: "Collect",
-      data: historicalData
-    };
-
-    console.log(`✅ [${requestId}] HISTORICAL COLLECT - Complete: ${historicalData.length} days processed`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating historical collect data:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate historical collect data",
-      message: error.message,
-    });
-  }
-});
-
+// COLLECT - Historical Single Day
 app.get("/historical/collect/:date", async (req, res) => {
   try {
     const { date } = req.params;
     const requestId = req.requestId || "unknown";
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL COLLECT SINGLE DAY - ${date}`);
-    
-    const dateRange = getDateRange(date);
+    const dateRange = getHistoricalDateRange(date);
+
     const orders = await processOrdersForStore("collect", dateRange, requestId);
-    const metrics = calculateSimplifiedMetrics(orders, "Collect");
-    
-    const response = {
-      date: date,
-      ...metrics
-    };
+    const metrics = calculateHistoricalMetrics(orders, "Collect");
+    metrics.date = date;
 
-    console.log(`✅ [${requestId}] HISTORICAL COLLECT SINGLE DAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
+    console.log(`✅ [${requestId}] COLLECT HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(metrics);
   } catch (error) {
-    console.error("Error calculating historical collect single day data:", error?.response?.data || error.message);
+    console.error("Error calculating collect historical metrics:", error?.response?.data || error.message);
     res.status(500).json({
-      error: "Failed to calculate historical collect single day data",
+      error: "Failed to calculate collect historical metrics",
       message: error.message,
     });
   }
 });
 
-// Franchise store historical endpoints
-app.get("/historical/franchise", async (req, res) => {
-  try {
-    const { months = 3 } = req.query;
-    const requestId = req.requestId || "unknown";
-    const monthsNum = parseInt(months);
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL FRANCHISE - Starting data fetch for ${monthsNum} months`);
-    
-    const { startDate, endDate } = getPastMonthsDateRange(monthsNum);
-    const allDates = getAllDatesInRange(startDate, endDate);
-    
-    const historicalData = [];
-    
-    for (const date of allDates) {
-      try {
-        const dateStr = date.toISOString().split('T')[0];
-        const dateRange = getDateRange(date);
-        
-        console.log(`   📅 Processing ${dateStr}...`);
-        
-        const orders = await processOrdersForStore("franchise", dateRange, requestId);
-        const metrics = calculateSimplifiedMetrics(orders, "Franchise");
-        
-        historicalData.push({
-          date: dateStr,
-          ...metrics
-        });
-        
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-      } catch (error) {
-        console.error(`   ❌ Error processing ${date.toISOString().split('T')[0]}:`, error.message);
-        historicalData.push({
-          date: date.toISOString().split('T')[0],
-          source: "Franchise",
-          summary: {
-            totalSales: 0,
-            totalOrders: 0,
-            averageOrderValue: 0,
-            currencyCode: "GEL",
-            totalRefunds: 0,
-            refundedOrders: 0,
-            totalItemsSold: 0,
-            totalCapsulesSold: 0,
-            totalMulticapsulesSold: 0,
-            totalEuropeanCapsulesSold: 0,
-            error: error.message
-          }
-        });
-      }
-    }
-    
-    const response = {
-      dateRange: {
-        from: startDate.toISOString().split('T')[0],
-        to: endDate.toISOString().split('T')[0],
-        lastUpdated: new Date().toISOString(),
-        totalDays: historicalData.length
-      },
-      source: "Franchise",
-      data: historicalData
-    };
-
-    console.log(`✅ [${requestId}] HISTORICAL FRANCHISE - Complete: ${historicalData.length} days processed`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating historical franchise data:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate historical franchise data",
-      message: error.message,
-    });
-  }
-});
-
+// FRANCHISE - Historical Single Day
 app.get("/historical/franchise/:date", async (req, res) => {
   try {
     const { date } = req.params;
     const requestId = req.requestId || "unknown";
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL FRANCHISE SINGLE DAY - ${date}`);
-    
-    const dateRange = getDateRange(date);
+    const dateRange = getHistoricalDateRange(date);
+
     const orders = await processOrdersForStore("franchise", dateRange, requestId);
-    const metrics = calculateSimplifiedMetrics(orders, "Franchise");
-    
-    const response = {
-      date: date,
-      ...metrics
-    };
+    const metrics = calculateHistoricalMetrics(orders, "Franchise");
+    metrics.date = date;
 
-    console.log(`✅ [${requestId}] HISTORICAL FRANCHISE SINGLE DAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
+    console.log(`✅ [${requestId}] FRANCHISE HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(metrics);
   } catch (error) {
-    console.error("Error calculating historical franchise single day data:", error?.response?.data || error.message);
+    console.error("Error calculating franchise historical metrics:", error?.response?.data || error.message);
     res.status(500).json({
-      error: "Failed to calculate historical franchise single day data",
+      error: "Failed to calculate franchise historical metrics",
       message: error.message,
     });
   }
 });
 
-// B2B store historical endpoints
-app.get("/historical/b2b", async (req, res) => {
-  try {
-    const { months = 3 } = req.query;
-    const requestId = req.requestId || "unknown";
-    const monthsNum = parseInt(months);
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL B2B - Starting data fetch for ${monthsNum} months`);
-    
-    const { startDate, endDate } = getPastMonthsDateRange(monthsNum);
-    const allDates = getAllDatesInRange(startDate, endDate);
-    
-    const historicalData = [];
-    
-    for (const date of allDates) {
-      try {
-        const dateStr = date.toISOString().split('T')[0];
-        const dateRange = getDateRange(date);
-        
-        console.log(`   📅 Processing ${dateStr}...`);
-        
-        const orders = await processOrdersForStore("b2b", dateRange, requestId);
-        const metrics = calculateSimplifiedMetrics(orders, "B2B");
-        
-        historicalData.push({
-          date: dateStr,
-          ...metrics
-        });
-        
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-      } catch (error) {
-        console.error(`   ❌ Error processing ${date.toISOString().split('T')[0]}:`, error.message);
-        historicalData.push({
-          date: date.toISOString().split('T')[0],
-          source: "B2B",
-          summary: {
-            totalSales: 0,
-            totalOrders: 0,
-            averageOrderValue: 0,
-            currencyCode: "GEL",
-            totalRefunds: 0,
-            refundedOrders: 0,
-            totalItemsSold: 0,
-            totalCapsulesSold: 0,
-            totalMulticapsulesSold: 0,
-            totalEuropeanCapsulesSold: 0,
-            error: error.message
-          }
-        });
-      }
-    }
-    
-    const response = {
-      dateRange: {
-        from: startDate.toISOString().split('T')[0],
-        to: endDate.toISOString().split('T')[0],
-        lastUpdated: new Date().toISOString(),
-        totalDays: historicalData.length
-      },
-      source: "B2B",
-      data: historicalData
-    };
-
-    console.log(`✅ [${requestId}] HISTORICAL B2B - Complete: ${historicalData.length} days processed`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating historical b2b data:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate historical b2b data",
-      message: error.message,
-    });
-  }
-});
-
+// B2B - Historical Single Day
 app.get("/historical/b2b/:date", async (req, res) => {
   try {
     const { date } = req.params;
     const requestId = req.requestId || "unknown";
-    
-    console.log(`\n📊 [${requestId}] HISTORICAL B2B SINGLE DAY - ${date}`);
-    
-    const dateRange = getDateRange(date);
+    const dateRange = getHistoricalDateRange(date);
+
     const orders = await processOrdersForStore("b2b", dateRange, requestId);
-    const metrics = calculateSimplifiedMetrics(orders, "B2B");
-    
-    const response = {
-      date: date,
-      ...metrics
-    };
+    const metrics = calculateHistoricalMetrics(orders, "B2B");
+    metrics.date = date;
 
-    console.log(`✅ [${requestId}] HISTORICAL B2B SINGLE DAY - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
-    res.json(response);
+    console.log(`✅ [${requestId}] B2B HISTORICAL ${date} - Complete: ${metrics.summary.totalSales.toFixed(2)} ${metrics.summary.currencyCode || "GEL"} (${metrics.summary.totalOrders} orders)`);
+    res.json(metrics);
   } catch (error) {
-    console.error("Error calculating historical b2b single day data:", error?.response?.data || error.message);
+    console.error("Error calculating b2b historical metrics:", error?.response?.data || error.message);
     res.status(500).json({
-      error: "Failed to calculate historical b2b single day data",
+      error: "Failed to calculate b2b historical metrics",
       message: error.message,
     });
   }
 });
 
-// Test endpoint for detailed capsule analysis
-app.get("/test/capsules/ecom", async (req, res) => {
-  try {
-    const { date = new Date().toISOString().split('T')[0] } = req.query;
-    const requestId = req.requestId || "unknown";
-    
-    console.log(`\n📊 [${requestId}] TEST CAPSULES ECOM - ${date}`);
-    
-    const dateRange = getDateRange(date);
-    const orders = await processOrdersForStore("ecommerce", dateRange, requestId, 'online');
-    
-    const detailedOrders = [];
-    
-    orders.forEach(order => {
-      const orderDetails = {
-        orderId: order.id,
-        orderName: order.name,
-        createdAt: order.createdAt,
-        financialStatus: order.displayFinancialStatus,
-        fulfillmentStatus: order.displayFulfillmentStatus,
-        sourceName: order.sourceName,
-        totalPrice: parseFloat(order.currentTotalPriceSet?.shopMoney?.amount || "0"),
-        currencyCode: order.currentTotalPriceSet?.shopMoney?.currencyCode,
-        refundedAmount: parseFloat(order.totalRefundedSet?.shopMoney?.amount || "0"),
-        isRefunded: parseFloat(order.totalRefundedSet?.shopMoney?.amount || "0") > 0,
-        isCanceled: order.displayFulfillmentStatus === 'CANCELED' || order.displayFinancialStatus === 'CANCELED',
-        isDraft: order.displayFinancialStatus === 'DRAFT',
-        isPartiallyRefunded: order.displayFinancialStatus === 'PARTIALLY_REFUNDED',
-        isPartiallyPaid: order.displayFinancialStatus === 'PARTIALLY_PAID',
-        isPending: order.displayFinancialStatus === 'PENDING',
-        lineItems: []
-      };
-      
-      let orderTotalCapsules = 0;
-      let orderMulticapsules = 0;
-      let orderEuropeanCapsules = 0;
-      let orderTeaCapsules = 0;
-      
-      if (order.lineItems?.nodes) {
-        order.lineItems.nodes.forEach(item => {
-          const sku = item.variant?.sku || "";
-          const quantity = item.quantity || 0;
-          const productTitle = item.variant?.product?.title || item.title || "";
-          const variantTitle = item.variantTitle || item.variant?.title || "";
-          
-          // Calculate capsules for this item
-          const { capsules, category } = calculateCapsulesFromSKU(sku);
-          const totalCapsulesForItem = quantity * capsules;
-          
-          orderTotalCapsules += totalCapsulesForItem;
-          
-          if (category === 'Multicapsule' || category === 'Multicapsule/ New Flavors') {
-            orderMulticapsules += totalCapsulesForItem;
-          } else if (category === 'European') {
-            orderEuropeanCapsules += totalCapsulesForItem;
-          } else if (category === 'Tea') {
-            orderTeaCapsules += totalCapsulesForItem;
-          }
-          
-          orderDetails.lineItems.push({
-            sku: sku,
-            productTitle: productTitle,
-            variantTitle: variantTitle,
-            quantity: quantity,
-            unitPrice: parseFloat(item.originalUnitPriceSet?.shopMoney?.amount || "0"),
-            totalPrice: quantity * parseFloat(item.originalUnitPriceSet?.shopMoney?.amount || "0"),
-            capsulesPerUnit: capsules,
-            totalCapsules: totalCapsulesForItem,
-            category: category,
-            isCapsule: capsules > 0
-          });
-        });
-      }
-      
-      orderDetails.totalCapsules = orderTotalCapsules;
-      orderDetails.totalMulticapsules = orderMulticapsules;
-      orderDetails.totalEuropeanCapsules = orderEuropeanCapsules;
-      orderDetails.totalTeaCapsules = orderTeaCapsules;
-      
-      detailedOrders.push(orderDetails);
-    });
-    
-    // Sort by total capsules (highest first)
-    detailedOrders.sort((a, b) => b.totalCapsules - a.totalCapsules);
-    
-    const response = {
-      date: date,
-      source: "Ecom",
-      totalOrders: detailedOrders.length,
-      totalCapsules: detailedOrders.reduce((sum, order) => sum + order.totalCapsules, 0),
-      totalMulticapsules: detailedOrders.reduce((sum, order) => sum + order.totalMulticapsules, 0),
-      totalEuropeanCapsules: detailedOrders.reduce((sum, order) => sum + order.totalEuropeanCapsules, 0),
-      totalTeaCapsules: detailedOrders.reduce((sum, order) => sum + order.totalTeaCapsules, 0),
-      orders: detailedOrders
-    };
-
-    console.log(`✅ [${requestId}] TEST CAPSULES ECOM - Complete: ${detailedOrders.length} orders, ${response.totalCapsules} total capsules`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating test capsules ecom data:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate test capsules ecom data",
-      message: error.message,
-    });
-  }
-});
-
-app.get("/test/capsules/brandstore", async (req, res) => {
-  try {
-    const { date = new Date().toISOString().split('T')[0] } = req.query;
-    const requestId = req.requestId || "unknown";
-    
-    console.log(`\n📊 [${requestId}] TEST CAPSULES BRANDSTORE - ${date}`);
-    
-    const dateRange = getDateRange(date);
-    const orders = await processOrdersForStore("ecommerce", dateRange, requestId, 'pos');
-    
-    const detailedOrders = [];
-    
-    orders.forEach(order => {
-      const orderDetails = {
-        orderId: order.id,
-        orderName: order.name,
-        createdAt: order.createdAt,
-        financialStatus: order.displayFinancialStatus,
-        fulfillmentStatus: order.displayFulfillmentStatus,
-        sourceName: order.sourceName,
-        totalPrice: parseFloat(order.currentTotalPriceSet?.shopMoney?.amount || "0"),
-        currencyCode: order.currentTotalPriceSet?.shopMoney?.currencyCode,
-        refundedAmount: parseFloat(order.totalRefundedSet?.shopMoney?.amount || "0"),
-        isRefunded: parseFloat(order.totalRefundedSet?.shopMoney?.amount || "0") > 0,
-        isCanceled: order.displayFulfillmentStatus === 'CANCELED' || order.displayFinancialStatus === 'CANCELED',
-        isDraft: order.displayFinancialStatus === 'DRAFT',
-        isPartiallyRefunded: order.displayFinancialStatus === 'PARTIALLY_REFUNDED',
-        isPartiallyPaid: order.displayFinancialStatus === 'PARTIALLY_PAID',
-        isPending: order.displayFinancialStatus === 'PENDING',
-        lineItems: []
-      };
-      
-      let orderTotalCapsules = 0;
-      let orderMulticapsules = 0;
-      let orderEuropeanCapsules = 0;
-      let orderTeaCapsules = 0;
-      
-      if (order.lineItems?.nodes) {
-        order.lineItems.nodes.forEach(item => {
-          const sku = item.variant?.sku || "";
-          const quantity = item.quantity || 0;
-          const productTitle = item.variant?.product?.title || item.title || "";
-          const variantTitle = item.variantTitle || item.variant?.title || "";
-          
-          // Calculate capsules for this item
-          const { capsules, category } = calculateCapsulesFromSKU(sku);
-          const totalCapsulesForItem = quantity * capsules;
-          
-          orderTotalCapsules += totalCapsulesForItem;
-          
-          if (category === 'Multicapsule' || category === 'Multicapsule/ New Flavors') {
-            orderMulticapsules += totalCapsulesForItem;
-          } else if (category === 'European') {
-            orderEuropeanCapsules += totalCapsulesForItem;
-          } else if (category === 'Tea') {
-            orderTeaCapsules += totalCapsulesForItem;
-          }
-          
-          orderDetails.lineItems.push({
-            sku: sku,
-            productTitle: productTitle,
-            variantTitle: variantTitle,
-            quantity: quantity,
-            unitPrice: parseFloat(item.originalUnitPriceSet?.shopMoney?.amount || "0"),
-            totalPrice: quantity * parseFloat(item.originalUnitPriceSet?.shopMoney?.amount || "0"),
-            capsulesPerUnit: capsules,
-            totalCapsules: totalCapsulesForItem,
-            category: category,
-            isCapsule: capsules > 0
-          });
-        });
-      }
-      
-      orderDetails.totalCapsules = orderTotalCapsules;
-      orderDetails.totalMulticapsules = orderMulticapsules;
-      orderDetails.totalEuropeanCapsules = orderEuropeanCapsules;
-      orderDetails.totalTeaCapsules = orderTeaCapsules;
-      
-      detailedOrders.push(orderDetails);
-    });
-    
-    // Sort by total capsules (highest first)
-    detailedOrders.sort((a, b) => b.totalCapsules - a.totalCapsules);
-    
-    const response = {
-      date: date,
-      source: "Brand Store",
-      totalOrders: detailedOrders.length,
-      totalCapsules: detailedOrders.reduce((sum, order) => sum + order.totalCapsules, 0),
-      totalMulticapsules: detailedOrders.reduce((sum, order) => sum + order.totalMulticapsules, 0),
-      totalEuropeanCapsules: detailedOrders.reduce((sum, order) => sum + order.totalEuropeanCapsules, 0),
-      totalTeaCapsules: detailedOrders.reduce((sum, order) => sum + order.totalTeaCapsules, 0),
-      orders: detailedOrders
-    };
-
-    console.log(`✅ [${requestId}] TEST CAPSULES BRANDSTORE - Complete: ${detailedOrders.length} orders, ${response.totalCapsules} total capsules`);
-    res.json(response);
-  } catch (error) {
-    console.error("Error calculating test capsules brandstore data:", error?.response?.data || error.message);
-    res.status(500).json({
-      error: "Failed to calculate test capsules brandstore data",
-      message: error.message,
-    });
-  }
-});
-
-// Legacy redirects
-app.get('/sales-today', (req, res) => {
-  res.redirect('/sales/today' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
-});
-
-app.get('/sales-yesterday', (req, res) => {
-  res.redirect('/sales/yesterday' + (req.url.includes('?') ? '?' + req.url.split('?')[1] : ''));
-});
 
 // Error handling middleware
 app.use((error, req, res, next) => {
@@ -1877,81 +774,40 @@ app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
     error: 'Endpoint not found',
+    message: 'The requested endpoint does not exist. Please check the available endpoints.',
     availableEndpoints: [
       'GET /health - Health check and environment status',
       'GET /shops - List available shops and their configuration',
-      'GET /test - Test environment configuration',
-      'GET /sales/today?shop=ecommerce - Get today\'s sales for specific shop',
-      'GET /sales/yesterday?shop=ecommerce - Get yesterday\'s sales for specific shop',
-      'GET /sales/ecom/today?shop=ecommerce - Get ecom sales for today',
-      'GET /sales/ecom/yesterday?shop=ecommerce - Get ecom sales for yesterday',
-      'GET /sales/brandstore/today?shop=ecommerce - Get brand store sales for today',
-      'GET /sales/brandstore/yesterday?shop=ecommerce - Get brand store sales for yesterday',
-      'GET /historical/ecom?months=3 - Get historical ecom data for past months',
-      'GET /historical/brandstore?months=3 - Get historical brandstore data for past months',
-      'GET /historical/vending?months=3 - Get historical vending data for past months',
-      'GET /historical/collect?months=3 - Get historical collect data for past months',
-      'GET /historical/franchise?months=3 - Get historical franchise data for past months',
-      'GET /historical/b2b?months=3 - Get historical b2b data for past months',
-      'GET /historical/ecom/2025-01-15 - Get ecom data for specific date',
-      'GET /historical/brandstore/2025-01-15 - Get brandstore data for specific date',
-      'GET /historical/vending/2025-01-15 - Get vending data for specific date',
-      'GET /historical/collect/2025-01-15 - Get collect data for specific date',
-      'GET /historical/franchise/2025-01-15 - Get franchise data for specific date',
-      'GET /historical/b2b/2025-01-15 - Get b2b data for specific date',
-      'GET /vending/today - All sales from vending store today',
-      'GET /vending/yesterday - All sales from vending store yesterday',
-      'GET /collect/today - All sales from collect store today',
-      'GET /collect/yesterday - All sales from collect store yesterday',
-      'GET /franchise/today - All sales from franchise store today',
-      'GET /franchise/yesterday - All sales from franchise store yesterday',
-      'GET /b2b/today - All sales from b2b store today',
-      'GET /b2b/yesterday - All sales from b2b store yesterday'
-    ],
-    availableShops: Object.keys(SHOP_CONFIGS)
+      'GET /historical/general-ecom/:date - Historical single day data for general ecommerce',
+      'GET /historical/ecom/:date - Historical single day data for ecommerce (online only)',
+      'GET /historical/brandstores/:date - Historical single day data for brand stores (POS only)',
+      'GET /historical/vending/:date - Historical single day data for vending store',
+      'GET /historical/collect/:date - Historical single day data for collect store',
+      'GET /historical/franchise/:date - Historical single day data for franchise store',
+      'GET /historical/b2b/:date - Historical single day data for B2B store'
+    ]
   });
 });
 
 // Start server
 const server = app.listen(PORT, () => {
-  console.log('🚀 Shopify Data Puller Server Started');
-  console.log('=====================================');
+  console.log('🚀 Shopify Historical Data API Server Started');
+  console.log('===============================================');
   console.log(`🌐 Server running on: http://localhost:${PORT}`);
   console.log('');
-  console.log('📋 Available Endpoints:');
+  console.log('📋 Available Historical Endpoints:');
+  console.log(`   GET  http://localhost:${PORT}/historical/general-ecom/2025-10-06`);
+  console.log(`   GET  http://localhost:${PORT}/historical/ecom/2025-10-06`);
+  console.log(`   GET  http://localhost:${PORT}/historical/brandstores/2025-10-06`);
+  console.log(`   GET  http://localhost:${PORT}/historical/vending/2025-10-06`);
+  console.log(`   GET  http://localhost:${PORT}/historical/collect/2025-10-06`);
+  console.log(`   GET  http://localhost:${PORT}/historical/franchise/2025-10-06`);
+  console.log(`   GET  http://localhost:${PORT}/historical/b2b/2025-10-06`);
+  console.log('');
+  console.log('   Other Endpoints:');
   console.log(`   GET  http://localhost:${PORT}/health`);
   console.log(`   GET  http://localhost:${PORT}/shops`);
-  console.log(`   GET  http://localhost:${PORT}/test`);
-  console.log(`   GET  http://localhost:${PORT}/sales/today?shop=ecommerce`);
-  console.log(`   GET  http://localhost:${PORT}/sales/yesterday?shop=ecommerce`);
-  console.log(`   GET  http://localhost:${PORT}/sales/ecom/today?shop=ecommerce`);
-  console.log(`   GET  http://localhost:${PORT}/sales/ecom/yesterday?shop=ecommerce`);
-  console.log(`   GET  http://localhost:${PORT}/sales/brandstore/today?shop=ecommerce`);
-  console.log(`   GET  http://localhost:${PORT}/sales/brandstore/yesterday?shop=ecommerce`);
-  console.log(`   GET  http://localhost:${PORT}/historical/ecom?months=3`);
-  console.log(`   GET  http://localhost:${PORT}/historical/brandstore?months=3`);
-  console.log(`   GET  http://localhost:${PORT}/historical/vending?months=3`);
-  console.log(`   GET  http://localhost:${PORT}/historical/collect?months=3`);
-  console.log(`   GET  http://localhost:${PORT}/historical/franchise?months=3`);
-  console.log(`   GET  http://localhost:${PORT}/historical/b2b?months=3`);
-  console.log(`   GET  http://localhost:${PORT}/historical/ecom/2025-01-15`);
-  console.log(`   GET  http://localhost:${PORT}/historical/brandstore/2025-01-15`);
-  console.log(`   GET  http://localhost:${PORT}/historical/vending/2025-01-15`);
-  console.log(`   GET  http://localhost:${PORT}/historical/collect/2025-01-15`);
-  console.log(`   GET  http://localhost:${PORT}/historical/franchise/2025-01-15`);
-  console.log(`   GET  http://localhost:${PORT}/historical/b2b/2025-01-15`);
-  console.log(`   GET  http://localhost:${PORT}/vending/today`);
-  console.log(`   GET  http://localhost:${PORT}/vending/yesterday`);
-  console.log(`   GET  http://localhost:${PORT}/collect/today`);
-  console.log(`   GET  http://localhost:${PORT}/collect/yesterday`);
-  console.log(`   GET  http://localhost:${PORT}/franchise/today`);
-  console.log(`   GET  http://localhost:${PORT}/franchise/yesterday`);
-  console.log(`   GET  http://localhost:${PORT}/b2b/today`);
-  console.log(`   GET  http://localhost:${PORT}/b2b/yesterday`);
-  console.log(`   GET  http://localhost:${PORT}/test/capsules/ecom?date=2025-10-06`);
-  console.log(`   GET  http://localhost:${PORT}/test/capsules/brandstore?date=2025-10-06`);
-  console.log('');
-  console.log('🏪 Available Shops: ecommerce, vending, collect, franchise, b2b, brandstores');
+  console.log(`   GET  http://localhost:${PORT}/`);
   console.log('');
 });
 
