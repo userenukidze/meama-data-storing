@@ -323,7 +323,8 @@ app.get('/', (req, res) => {
       'GET /historical/vending/:date - Historical single day data for vending store',
       'GET /historical/collect/:date - Historical single day data for collect store',
       'GET /historical/franchise/:date - Historical single day data for franchise store',
-      'GET /historical/b2b/:date - Historical single day data for B2B store'
+      'GET /historical/b2b/:date - Historical single day data for B2B store',
+      'GET /historical/date-range?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD - Historical data for all shops within date range'
     ]
   });
 });
@@ -393,6 +394,40 @@ const getPastMonthIncludingCurrentRange = () => {
   const endDate = new Date(Date.UTC(currentYear, currentMonth, currentDay - 1, 23, 59, 59, 999));
   
   return { startDate, endDate };
+};
+
+// Helper function to validate and parse date range
+const validateAndParseDateRange = (startDateStr, endDateStr) => {
+  // Validate date string format
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+  
+  if (!startDateStr || !endDateStr) {
+    throw new Error('Both startDate and endDate are required');
+  }
+  
+  if (!dateRegex.test(startDateStr) || !dateRegex.test(endDateStr)) {
+    throw new Error('Invalid date format. Use YYYY-MM-DD format');
+  }
+  
+  const startDate = new Date(startDateStr + 'T00:00:00.000Z');
+  const endDate = new Date(endDateStr + 'T23:59:59.999Z');
+  
+  // Validate that dates are valid
+  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+    throw new Error('Invalid date values');
+  }
+  
+  // Check if start date is before end date
+  if (startDate > endDate) {
+    throw new Error('Start date must be before or equal to end date');
+  }
+  
+  return {
+    startDate,
+    endDate,
+    startISO: startDate.toISOString(),
+    endISO: endDate.toISOString()
+  };
 };
 
 // Helper function to process historical data for multiple days
@@ -758,6 +793,128 @@ app.get("/historical/b2b/:date", async (req, res) => {
   }
 });
 
+// ============================================================================
+// DATE RANGE ENDPOINTS - ALL SHOPS
+// ============================================================================
+
+// Helper function to process data for all shops within a date range
+const processAllShopsDateRange = async (startDateStr, endDateStr, requestId) => {
+  const dateRange = validateAndParseDateRange(startDateStr, endDateStr);
+  const allDates = getAllDatesInRange(dateRange.startDate, dateRange.endDate);
+  
+  console.log(`\n📊 [${requestId}] Starting date range processing for all shops`);
+  console.log(`   📅 Date Range: ${startDateStr} to ${endDateStr}`);
+  console.log(`   📅 Total Days: ${allDates.length}`);
+  
+  const shopResults = {};
+  const shopTypes = Object.keys(SHOP_CONFIGS);
+  
+  // Process each shop type
+  for (const shopType of shopTypes) {
+    try {
+      console.log(`\n🏪 [${requestId}] Processing ${shopType.toUpperCase()} shop...`);
+      
+      // Process each day for this shop
+      const shopData = [];
+      for (const date of allDates) {
+        try {
+          const dateStr = date.toISOString().split('T')[0];
+          const singleDateRange = getHistoricalDateRange(dateStr);
+          
+          // Get orders for this shop and date
+          const orders = await processOrdersForStore(shopType, singleDateRange, requestId);
+          const metrics = calculateHistoricalMetrics(orders, shopType.charAt(0).toUpperCase() + shopType.slice(1));
+          metrics.date = dateStr;
+          
+          shopData.push(metrics);
+          
+          // Small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 50));
+          
+        } catch (error) {
+          console.error(`   ❌ Error processing ${shopType} for ${date.toISOString().split('T')[0]}:`, error.message);
+          shopData.push({
+            date: date.toISOString().split('T')[0],
+            source: shopType.charAt(0).toUpperCase() + shopType.slice(1),
+            summary: {
+              totalSales: 0,
+              totalOrders: 0,
+              averageOrderValue: 0,
+              currencyCode: "GEL",
+              totalRefunds: 0,
+              refundedOrders: 0,
+              totalItemsSold: 0,
+              totalCapsulesSold: 0,
+              totalMulticapsulesSold: 0,
+              totalEuropeanCapsulesSold: 0,
+              totalTeaCapsulesSold: 0,
+              error: error.message
+            }
+          });
+        }
+      }
+      
+      shopResults[shopType] = shopData;
+      console.log(`   ✅ [${requestId}] ${shopType.toUpperCase()} - Complete: ${shopData.length} days processed`);
+      
+    } catch (error) {
+      console.error(`   ❌ [${requestId}] Error processing ${shopType}:`, error.message);
+      shopResults[shopType] = [];
+    }
+  }
+  
+  return shopResults;
+};
+
+// DATE RANGE - All Shops
+app.get("/historical/date-range", async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const requestId = req.requestId || "unknown";
+    
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        error: "Missing required parameters",
+        message: "Both startDate and endDate query parameters are required (format: YYYY-MM-DD)",
+        example: "/historical/date-range?startDate=2025-01-01&endDate=2025-01-31"
+      });
+    }
+    
+    const shopResults = await processAllShopsDateRange(startDate, endDate, requestId);
+    
+    const response = {
+      period: "custom-date-range",
+      dateRange: {
+        from: startDate,
+        to: endDate,
+        totalDays: getAllDatesInRange(
+          new Date(startDate + 'T00:00:00.000Z'),
+          new Date(endDate + 'T23:59:59.999Z')
+        ).length
+      },
+      shops: shopResults,
+      summary: {
+        totalShops: Object.keys(shopResults).length,
+        processedShops: Object.keys(shopResults).filter(shop => shopResults[shop].length > 0).length,
+        totalDays: getAllDatesInRange(
+          new Date(startDate + 'T00:00:00.000Z'),
+          new Date(endDate + 'T23:59:59.999Z')
+        ).length
+      }
+    };
+
+    console.log(`\n🎉 [${requestId}] Date range processing complete! Processed ${response.summary.processedShops}/${response.summary.totalShops} shops.`);
+    res.json(response);
+    
+  } catch (error) {
+    console.error("Error processing date range data:", error?.response?.data || error.message);
+    res.status(500).json({
+      error: "Failed to process date range data",
+      message: error.message,
+    });
+  }
+});
+
 
 // Error handling middleware
 app.use((error, req, res, next) => {
@@ -784,7 +941,8 @@ app.use('*', (req, res) => {
       'GET /historical/vending/:date - Historical single day data for vending store',
       'GET /historical/collect/:date - Historical single day data for collect store',
       'GET /historical/franchise/:date - Historical single day data for franchise store',
-      'GET /historical/b2b/:date - Historical single day data for B2B store'
+      'GET /historical/b2b/:date - Historical single day data for B2B store',
+      'GET /historical/date-range?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD - Historical data for all shops within date range'
     ]
   });
 });
@@ -803,6 +961,7 @@ const server = app.listen(PORT, () => {
   console.log(`   GET  http://localhost:${PORT}/historical/collect/2025-10-06`);
   console.log(`   GET  http://localhost:${PORT}/historical/franchise/2025-10-06`);
   console.log(`   GET  http://localhost:${PORT}/historical/b2b/2025-10-06`);
+  console.log(`   GET  http://localhost:${PORT}/historical/date-range?startDate=2025-01-01&endDate=2025-01-31`);
   console.log('');
   console.log('   Other Endpoints:');
   console.log(`   GET  http://localhost:${PORT}/health`);
